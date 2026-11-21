@@ -78,8 +78,11 @@ func antigravityLogin(args []string) error {
 		return cancelSignIn(dir)
 	}
 	if arg != "" {
-		code, err := signInCode(arg)
+		code, err := pastedSignInCode(arg, os.Stdin)
 		if err != nil {
+			return err
+		}
+		if err := checkShownLink(dir); err != nil {
 			return err
 		}
 		if err := submitSignInCode(dir, code); err != nil {
@@ -237,7 +240,7 @@ func printSignInLink(w io.Writer, link string, replaced, withBrowser, again, her
 		fmt.Fprintln(w, "To sign in again, such as with another Google account, open this link in a browser on any device:")
 	case withBrowser:
 		finish := "Sign in there, and NeoSwitch finishes on its own."
-		if !here {
+		if !here && !dialogMode() {
 			finish = fmt.Sprintf("Sign in there, and NeoSwitch finishes on its own; %s then shows the result.", statusCommand())
 		}
 		fmt.Fprintln(w, "A Google sign-in page opens in a browser on this computer. "+finish)
@@ -257,13 +260,32 @@ func printSignInLink(w io.Writer, link string, replaced, withBrowser, again, her
 		fmt.Fprintln(w, "The page then shows a code. Paste it here and press Enter:")
 		return
 	}
-	fmt.Fprintf(w, "The page then shows a code. Copy it and run %s followed by the code, such as: %s 4/0Ab...\n", loginCommand(), loginCommand())
-	if again {
-		fmt.Fprintf(w, "The current sign-in stays until then. To keep it and drop this link, run %s cancel.\n", loginCommand())
+	if dialogMode() {
+		fmt.Fprintln(w, "The page then shows a code: paste it into the dialog below, under Type something.")
+		if again {
+			fmt.Fprintln(w, "The current sign-in stays until then.")
+		}
+	} else {
+		fmt.Fprintf(w, "The page then shows a code. Copy it and run %s followed by the code, such as: %s 4/0Ab...\n", loginCommand(), loginCommand())
+		if again {
+			fmt.Fprintf(w, "The current sign-in stays until then. To keep it and drop this link, run %s cancel.\n", loginCommand())
+		}
 	}
 	fmt.Fprintln(w, "The link works for 10 minutes.")
 	if replaced {
 		fmt.Fprintln(w, "A link shown earlier no longer works; use this one.")
+	}
+	switch {
+	case dialogMode() && again:
+		fmt.Fprintln(w, dialogLine+"again")
+	case dialogMode() && withBrowser:
+		fmt.Fprintln(w, dialogLine+"browser")
+	case dialogMode():
+		fmt.Fprintln(w, dialogLine+"code")
+	case os.Getenv(pluginEnv) != "":
+		if hint := dialogVersionHint(); hint != "" {
+			fmt.Fprintln(w, hint)
+		}
 	}
 }
 
@@ -289,6 +311,46 @@ func isTerminal(f *os.File) bool {
 	}
 	null, err := os.Stat(os.DevNull)
 	return err != nil || !os.SameFile(info, null)
+}
+
+// The plugin's dialog shows the sign-in in Claude Code itself, without a reply from the model: it runs the command with dialogEnv set, reads the closing dialogLine to know which dialog to open, and gives the code it was handed back on stdin, with the link it showed in shownLinkEnv.
+const (
+	dialogEnv    = "NEOSWITCH_DIALOG"
+	shownLinkEnv = "NEOSWITCH_SIGN_IN_LINK"
+	// dialogLine closes the output in dialog mode, followed by browser (the browser sign-in runs beside the link), code (only the code finishes it) or again (it would replace the current sign-in). The dialog shows every line before it.
+	dialogLine = "@neoswitch-dialog "
+	// maxPastedCode bounds what is read from stdin; a sign-in code is far shorter.
+	maxPastedCode = 4096
+)
+
+func dialogMode() bool { return os.Getenv(dialogEnv) == "1" }
+
+// pastedSignInCode is the code the user gave: the argument, or in dialog mode, where the argument is "-", the text the dialog hands over on stdin. That text is never repeated in an error: it went into a dialog to stay out of the conversation, and it may be anything the user pasted by mistake.
+func pastedSignInCode(arg string, stdin io.Reader) (string, error) {
+	if arg != "-" || !dialogMode() {
+		return signInCode(arg)
+	}
+	data, err := io.ReadAll(io.LimitReader(stdin, maxPastedCode+1))
+	if err != nil {
+		return "", fmt.Errorf("read the sign-in code: %w", err)
+	}
+	code, err := signInCode(string(data))
+	if err != nil {
+		return "", errors.New("what was pasted is not a sign-in code. Paste only the code the Google sign-in page shows, such as 4/0Ab..., or run /neoswitch:login again for a new link")
+	}
+	return code, nil
+}
+
+// checkShownLink refuses a code meant for a sign-in that another /neoswitch:login, for example in another window, has replaced since the dialog showed its link: agy accepts one code exchange per sign-in, and the code would be spent on the wrong one.
+func checkShownLink(dir string) error {
+	shown := strings.TrimSpace(os.Getenv(shownLinkEnv))
+	if shown == "" {
+		return nil
+	}
+	if pending := pendingSignInLink(dir); pending != "" && pending != shown {
+		return fmt.Errorf("this sign-in was replaced: %s ran again, maybe in another window, so the link this code came from no longer works. Your code was not used; open the newest link instead, or run %s again", loginCommand(), loginCommand())
+	}
+	return nil
 }
 
 // signInCode takes the code from what the user pasted: the code itself, or the address of the page that showed it.

@@ -208,7 +208,12 @@ func enableProject(project string, session claudeSession, models []string) error
 		return err
 	}
 	setDeclined(dir, project, false)
-	fmt.Println("This session uses Gemini from your next message (this reply may still come from Claude). Other sessions keep using Claude: windows open in this project and new ones pass their requests through NeoSwitch to Claude unchanged while this session is open. /neoswitch:off returns this session to Claude; when it closes, the project goes back to how it was.")
+	// The plugin's dialog answers without a model reply, so there is no reply to warn about.
+	replyNote := " (this reply may still come from Claude)"
+	if dialogMode() {
+		replyNote = ""
+	}
+	fmt.Println("This session uses Gemini from your next message" + replyNote + ". Other sessions keep using Claude: windows open in this project and new ones pass their requests through NeoSwitch to Claude unchanged while this session is open. /neoswitch:off returns this session to Claude; when it closes, the project goes back to how it was.")
 	if notice != "" {
 		fmt.Println(notice)
 	}
