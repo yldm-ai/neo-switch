@@ -299,8 +299,8 @@ Usage:
   neoswitch antigravity login                 sign in with Google through the official agy: a browser opens, and a printed link works on any device
   neoswitch antigravity login cancel          drop a sign-in still waiting for its code; the current sign-in stays
   neoswitch antigravity probe                 verify the official agy session without reading its token
-  neoswitch on [project]                      route new Claude Code sessions in a project to Gemini
-  neoswitch off [project]                     route them back to Anthropic
+  neoswitch on [project]                      inside a Claude Code session: answer it with Gemini from its next message
+  neoswitch off [project]                     inside a Claude Code session: switch it back to Claude
   neoswitch status [-v] [project]             show whether a project uses NeoSwitch and what to do next (-v adds details)
   neoswitch backend [auto|antigravity|gemini|openai]  show or choose the upstream (openai is opt-in and experimental)
   neoswitch doctor                            check that the credentials can use the model

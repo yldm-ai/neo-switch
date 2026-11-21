@@ -37,7 +37,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 > [!WARNING]
 > [Google Antigravity 服务条款](https://antigravity.google/terms)（第 6 条）禁止通过其他工具使用 Antigravity，NeoSwitch 就属于这类工具。Google 可能暂停或关闭这样做的人的 Antigravity 账号。`/neoswitch:login` 每次都会重复这条警告。不接受这个风险，就不要登录。
 
-**3. 发下一条消息。** 运行命令的那个窗口从下一条消息起就用 Gemini 4 Neon，这个项目里的新会话也一样。如果命令的回复要你重启（Claude Code 是通过网关启动的，或者别的 Claude Code 窗口还在用 NeoSwitch 之前的设置），就关掉它提到的窗口，然后在同一个项目里重新运行 `claude`。这个项目里最后一个使用 NeoSwitch 的会话关闭后，项目会切回 Claude，下次打开的会话就是 Claude；想再用 Gemini 4 Neon，运行 `/neoswitch:on`。
+**3. 发下一条消息。** 运行命令的那个窗口从下一条消息起就用 Gemini 4 Neon。其他窗口和新会话继续用 Claude，用的是你自己的 Claude 登录，connectors 也照常可用：想让哪个会话用 Gemini 4 Neon，就在那个会话里运行 `/neoswitch:on`。如果命令的回复要你重启（Claude Code 是通过网关启动的），就不经网关、在同一个项目里重新运行 `claude`。
 
 ## 开启后你会看到
 
@@ -54,9 +54,9 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 |---|---|
 | 会话开头的提示说 NeoSwitch 还没设置好 | 运行 `/neoswitch:login`。下一条消息就会用 Gemini 4 Neon。 |
 | 提示说没有安装 `agy` | `/neoswitch:login` 没能自动装上它。在终端里运行 `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，或从 [Google 的下载页](https://antigravity.google/download)安装，再运行一次 `/neoswitch:login`。 |
-| 每条消息都报连接错误，或者会话开头的提示说本会话无法回答 | 就在这个项目里运行 `/neoswitch:off`。即使它自己的回复也显示连接错误，项目也已经切回去了。然后输入 `/exit` 并重新运行 `claude`：你回到了 Claude，再运行 `/neoswitch:status` 看看该修什么。 |
+| 每条消息都报连接错误，或者会话开头的提示说本会话无法回答 | 运行 `/neoswitch:off`：这个会话从下一条消息起就回到 Claude，即使这条命令自己的回复失败也一样。如果消息仍然失败，输入 `/exit` 并重新运行 `claude`：新会话用的是 Claude，再运行 `/neoswitch:status` 看看该修什么。 |
 | 提示说其他 Claude Code 窗口还在共用之前的设置 | 关掉所有 Claude Code 窗口，重新打开 Claude Code，再运行 `/neoswitch:on`。 |
-| 提示说 claude.ai connectors 已停用，因为设置了另一个认证来源 | 这个会话在用 NeoSwitch 时属于正常现象：它的本地访问密钥优先于你的 claude.ai 登录。项目切回 Claude 之后（最后一个使用 NeoSwitch 的会话关闭，或运行 `/neoswitch:off`），下一个会话里 connectors 就会恢复。 |
+| 提示说 claude.ai connectors 已停用，因为设置了另一个认证来源 | 现在的 NeoSwitch 不会再导致这个提示，是旧版本造成的。请更新插件（见下文）。如果仍然出现，说明有别的工具给 Claude Code 设置了 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`。 |
 | 提示说有别的程序占用了 NeoSwitch 需要的端口 | 关掉那个程序后重新启动 Claude Code，或者运行 `/neoswitch:off`。 |
 | 提示说 NeoSwitch 下载不了它的程序 | 检查网络连接，然后重新启动 Claude Code。 |
 | `/neoswitch:login` 提示是未知命令 | 更新插件（见下文），重启 Claude Code，再运行 `/reload-plugins`。 |
@@ -64,7 +64,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 
 ## 关闭、更新与卸载
 
-- `/neoswitch:off` 让这个项目的新会话切回 Claude；已经在用 Gemini 4 Neon 的会话会一直用到你输入 `/exit`。`/neoswitch:on` 把项目再切回 Gemini 4 Neon，不用重新设置，从下一条消息开始生效。关闭项目里最后一个使用 NeoSwitch 的会话，效果相同。
+- `/neoswitch:off` 让这个会话从下一条消息起回到 Claude，用你自己的 Claude 登录。`/neoswitch:on` 再把它切回 Gemini 4 Neon，不用重新设置。关闭会话也就结束了它的切换：每个新会话都从 Claude 开始。
 
 手动更新：在终端里运行下面两条命令，然后关掉所有 Claude Code 窗口再重新打开：
 
@@ -77,7 +77,7 @@ claude plugin update neoswitch@neoswitch
 
 卸载 NeoSwitch：
 
-1. 先在每个开启过的项目里运行 `/neoswitch:off`。没有关掉的项目仍然指向 NeoSwitch，卸载后就无法回答了。如果已经卸载了插件，请在每个这样的项目里打开 `.claude/settings.local.json`，从 `env` 对象中删掉 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN` 和 `CLAUDE_CODE_USE_GATEWAY`。
+1. 先在每个开启过的项目里运行 `/neoswitch:off`。没有关掉的项目仍然指向 NeoSwitch，卸载后就无法回答了。如果已经卸载了插件，请在每个这样的项目里打开 `.claude/settings.local.json`，从 `env` 对象中删掉 `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`NODE_EXTRA_CA_CERTS`、`CLAUDE_CODE_USE_GATEWAY`，以及旧版本留下的 `ANTHROPIC_AUTH_TOKEN`。
 2. 关掉正在使用 NeoSwitch 的 Claude Code 窗口，然后在终端里运行：
 
 ```bash
@@ -96,9 +96,9 @@ Google 登录信息由 `agy` 保存，不归 NeoSwitch 管，卸载后仍然保�
 
 ## NeoSwitch 会改动什么
 
-在你开启的每个项目里，NeoSwitch 会往 `.claude/settings.local.json` 的 `env` 对象中加入三项，`/neoswitch:off` 或关闭最后一个使用 NeoSwitch 的会话时会把它们删掉：
+当某个项目里有会话在用 Gemini 4 Neon 时，NeoSwitch 会往这个项目的 `.claude/settings.local.json` 的 `env` 对象中加入四项；这个项目里不再有会话使用它时，就把它们删掉：
 
-- `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`：让这个项目的新 Claude Code 会话连到这台电脑上的 NeoSwitch。这个 token 只能用来访问本机的 NeoSwitch，不是 Google 或 Anthropic 的凭证。
+- `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS` 和 `NODE_EXTRA_CA_CERTS`：让这个项目的 Claude Code 请求经过一条只有 NeoSwitch 能应答的加密连接，发到这台电脑上的 NeoSwitch。你切换过的会话由 Gemini 4 Neon 回答；其他请求原样转给 Claude，用的是你自己的 Claude 登录，NeoSwitch 既不保存也不记录它。请求头里的密钥只能用来访问本机的 NeoSwitch。
 - `CLAUDE_CODE_USE_GATEWAY=0`：让这些会话直接连 NeoSwitch。有些工具会通过别的网关启动 Claude Code 并打开网关模式，那样 Claude Code 就会忽略 NeoSwitch。
 
 在 Git 项目里，NeoSwitch 还会把 `.claude/settings.local.json` 加进本地仓库自己的排除列表（`.git/info/exclude`），让这个 token 不会被提交；你的 `.gitignore` 不会被改动。

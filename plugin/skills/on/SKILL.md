@@ -1,5 +1,5 @@
 ---
-description: Switch this project to Gemini 4 Neon until its last session using NeoSwitch closes, once you have signed in or set up a Gemini API key
+description: Switch this session to Gemini 4 Neon from its next message, once you have signed in or set up a Gemini API key. Other sessions keep using Claude
 disable-model-invocation: true
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh *)
 ---

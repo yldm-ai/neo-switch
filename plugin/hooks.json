@@ -32,6 +32,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/plugin/prompt-submit.sh\" \"$PPID\"",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }

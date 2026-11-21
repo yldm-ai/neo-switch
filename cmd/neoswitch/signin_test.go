@@ -121,6 +121,8 @@ func fakeSignInEnv(t *testing.T) string {
 	t.Setenv("FAKE_BROWSER", "")
 	// No browser sign-in unless a test asks for one.
 	t.Setenv("SSH_CONNECTION", "10.0.0.2 51000 10.0.0.1 22")
+	// /neoswitch:login switches the session it runs in.
+	inSession(t)
 	t.Cleanup(func() {
 		if socket, err := signInSocket(dir); err == nil {
 			cancelPendingSignIn(socket)

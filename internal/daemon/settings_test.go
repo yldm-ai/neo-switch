@@ -49,7 +49,7 @@ func TestDisableWithoutNeoSwitchEntriesKeepsFile(t *testing.T) {
 func TestEnableThenDisableRestoresSettings(t *testing.T) {
 	s := testState(t)
 	project := t.TempDir()
-	if err := Enable(project, s); err != nil {
+	if err := Enable(project, s, Route{Bundle: BundlePath(s.dir)}); err != nil {
 		t.Fatal(err)
 	}
 	if on, err := Enabled(project, s); err != nil || !on {

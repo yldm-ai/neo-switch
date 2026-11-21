@@ -1,5 +1,5 @@
 ---
-description: Switch this project back to Claude
+description: Switch this session back to Claude from its next message, with your own Claude login
 disable-model-invocation: true
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh *)
 ---

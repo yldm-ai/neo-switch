@@ -1,6 +1,6 @@
 # Design: per-session routing that never takes Claude away
 
-Status: proposed, 2026-11-21. It supersedes how routing works today: `ANTHROPIC_AUTH_TOKEN` in project settings, and a project that is either routed or not.
+Status: phases 1 and 2 implemented, 2026-11-21 (phase 3, the start hint, is next). It supersedes how routing works today: `ANTHROPIC_AUTH_TOKEN` in project settings, and a project that is either routed or not.
 
 ## Requirements
 
@@ -18,6 +18,11 @@ Status: proposed, 2026-11-21. It supersedes how routing works today: `ANTHROPIC_
 | F5 | Every request carries `x-claude-code-session-id`. It equals the hooks' `session_id`, the skills' `${CLAUDE_SESSION_ID}`, and `CLAUDE_CODE_SESSION_ID` in a skill's `!` command. | Interactive probe |
 | F6 | How Claude Code shows an error status: **400** `invalid_request_error` → "API Error: 400 <message>", not retried. **403** → "Please run /login · …". **404** → "the selected model may not exist". **5xx** → retried with backoff for over 40 s without showing the message. | Probe server per status |
 | F7 | A skill's `!` command runs before the model turn, so `/neoswitch:off` takes effect even when the session's route fails. | Observed (fornix) |
+| F8 | A running session keeps project env it applied after the entries are removed, applies a changed value on its next request, and goes straight back to Anthropic when `ANTHROPIC_BASE_URL` is overwritten with `https://api.anthropic.com`. | Interactive TLS probe: write, remove, change, overwrite |
+| F9 | Claude Code retries a 400 about 8 to 10 times within seconds, in print mode and interactively, before it shows the message. A 400 must therefore be cheap to answer again. | Probe server count; two-window test |
+| F10 | Claude Code's TLS stack refuses every certificate under a CA that has name constraints on IP addresses (`UNSUPPORTED_CONSTRAINT_TYPE`), whether or not the address fits. NeoSwitch's CA therefore carries none; its key is discarded after signing the server certificate instead. | Two-window test, Claude Code 2.1.330 |
+| F11 | Every open Claude Code window of a project applies a settings change at once, through its file watcher, not only on its next request. | Adversarial review of the transient design (Claude Code source) |
+| F12 | Two real windows in one project: the one that ran `/neoswitch:on` reached the model side; the other, sharing the settings, was answered by Claude through passthrough with the user's own login; after `/neoswitch:off` the first window was answered by Claude in the same session; no connectors warning appeared; the settings were removed at `/neoswitch:off`, and the daemon stopped after both exited. | Two-window test, Claude Code 2.1.330, fake model side |
 
 ## Architecture
 
@@ -41,7 +46,7 @@ CLAUDE_CODE_USE_GATEWAY  = 0
 
 - **I1. The user's Claude credential travels only over TLS that only NeoSwitch can terminate, and only to Anthropic.**
   - The CA key and server key are private to the user (0600, in a 0700 folder).
-  - The CA is name-constrained to `IP:127.0.0.1`, so it cannot vouch for any other host.
+  - The CA's private key is discarded once it has signed the server certificate, so it cannot vouch for any other host. (Name constraints were the first plan; Claude Code refuses them, F10.)
   - The daemon never logs, stores or parses `Authorization` or `x-api-key`. It forwards them only to the Anthropic upstream recorded for the project.
   - A process squatting the port cannot complete TLS, so it gets nothing: not the credential, not the conversation, and no chance to answer with `tool_use`. Today, by contrast, it gets the conversation and the proxy token, and can make Claude Code run tools.
 - **I2. NeoSwitch's own failures never look like a Claude login problem.**
@@ -58,7 +63,7 @@ CLAUDE_CODE_USE_GATEWAY  = 0
 
 ### Components
 
-1. **TLS and CA.** Generated once into the state folder. The server certificate covers `127.0.0.1`, and the CA carries a critical nameConstraints extension. The CA bundle is written at enable time:
+1. **TLS and CA.** Generated once into the state folder. The server certificate covers `127.0.0.1` and lasts 397 days; the CA's key is never written (F10). The CA bundle is written at enable time:
    - If the user's environment already has `NODE_EXTRA_CA_CERTS`, for example a corporate proxy CA, its contents are kept in the bundle. Without that, the project setting would replace their CA and break their Claude.
    - Hooks and the CLI talk to the daemon through the same CA, so none of them sends the token to an impostor.
 2. **Request router (daemon).**
@@ -95,7 +100,29 @@ CLAUDE_CODE_USE_GATEWAY  = 0
    - Any NeoSwitch run also sweeps recorded projects with no opted-in live session and removes their settings.
    - Uninstalling the plugin without `/neoswitch:off` remains a documented gap: no hook fires on uninstall.
 
-### Behaviour the user sees
+### Why the settings are not transient
+
+A draft had the project settings removed as soon as every opted-in session had used them, so other windows would never touch NeoSwitch. Its review rejected it:
+
+- every open window applies a settings write at once (F11), so the other windows are affected anyway;
+- the opted-in session's route would then rest on F8, which looks like an accident of Claude Code's implementation (`Object.assign` into the environment that never deletes), while 2.1.330 already carries machinery that rebuilds child environments; if it changed, every opted-in session would fall back to Claude without a word.
+
+So the settings stay while an opted-in session of the project runs. What is kept from the draft: `/neoswitch:off` opts out instead of overwriting the base URL (an overwrite would revert every session of the project), the opt-in is registered before the settings are written, and the daemon is the source of truth for whether a session uses Gemini.
+
+### As built (phase 2)
+
+- **Opt-ins** are keyed by session id and kept with the process id in `<state>/opt-ins.json`, together with the projects whose settings point at the daemon, so a daemon started again (by the UserPromptSubmit hook after a crash) keeps every session where it was.
+- **Session registry.** The SessionStart and UserPromptSubmit hooks write `<state>/sessions/<session id>` with the process id, only where the state folder exists. The daemon uses it to move an opt-in to the new id `/clear` gives the same process, and to keep running for windows that applied the settings without attaching (F11). A window it cannot place keeps it running for 30 minutes after its last request.
+- **Release.** A project's settings go when its last opted-in session opts out or ends: at once through SessionEnd, within 10 s through the daemon's check for a crash, and on SIGTERM. The same check removes settings that point at the daemon with nobody opted in, so leftovers and stale rewrites do not survive. A session that merely started while the settings existed neither keeps nor removes them. Release and registration take one lock, synchronously.
+- **Hooks** decide from the session's env, the project's settings file, or the opt-ins file, not from the env alone (a window that applied the settings later may not show them to a hook).
+- **The daemon starts without a model backend**: sessions passing through to Claude need it whatever happened on the model side.
+- **Upgrade.** A state from before TLS moves to TLS on a new port, keeping its token, so a daemon of the earlier version can serve its sessions until they end; `Disable` also removes the earlier plain-HTTP entries.
+
+Open, with reopen conditions:
+- Requests of subagents and background tasks may carry another session id or none, and would then pass through to Claude in the middle of a Gemini turn. Reopen when a probe of a Task subagent shows a different `x-claude-code-session-id`.
+- A session that loses the applied env while its settings are still in the file is not detected. Reopen when a probe shows it happening on any Claude Code version.
+
+## Behaviour the user sees
 
 | Situation | Today | With this design |
 |---|---|---|
@@ -123,19 +150,24 @@ CLAUDE_CODE_USE_GATEWAY  = 0
 | Sub-decision | Source |
 |---|---|
 | Keep the user's login; authenticate with a custom header | Derived this round (F2, F3) |
-| TLS with a name-constrained CA | Derived this round (F4, plus the review's finding that the squat risk exists today) |
+| TLS with a local CA whose key is discarded | Derived this round (F4, F10, plus the review's finding that the squat risk exists today) |
 | Route by `x-claude-code-session-id` | Derived this round (F5) |
 | 400 for permanent and 529 for transient failures; never 401 or 403 | Derived this round (F6, plus the review's transient/permanent split) |
 | No silent fallback | Derived this round (blind design arm); the reopen condition is recorded |
 | Settings released when no session is opted in | Inherited from #53, re-keyed |
 | Preflight, port reselection, per-prompt self-heal, hint health | Adversarial review findings #1, #10, #6, #7 |
 | The Anthropic upstream is the one in effect when the project was enabled | Default; needs the gateway-user probe in phase 2 |
+| Settings kept while an opted-in session runs (not transient) | Review of the transient draft (F11, and the dependence on F8) |
+| Registry of session id → process; opt-in moves with the process across `/clear` | Review of the transient draft |
+| No name constraints on the CA; its key discarded instead | Measured (F10) |
+| `/neoswitch:off` opts out (passthrough) rather than overwriting the base URL | Derived this round (F8: an overwrite reverts every session in the project) |
+| Register the opt-in before writing settings | Derived this round (race between write, apply and removal) |
 
 ## Open items
 
 - Whether Anthropic's terms are fine with passing the user's own Claude Code requests through a local proxy unchanged. Claude Code itself supports `ANTHROPIC_BASE_URL` gateways. This is the owner's call.
 - A reboot test and a Linux test (Secret Service keyring locked, no D-Bus) for R1. Only F1's refresh across 2.5 hours has been verified.
-- Whether Claude Code's TLS stack (Bun) enforces nameConstraints. Probe: have the CA issue a certificate for another name and confirm it is rejected.
+- ~~Whether Claude Code's TLS stack enforces nameConstraints~~: it refuses IP name constraints outright (F10).
 
 ## Phases
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -87,15 +88,39 @@ type claudeSession struct {
 	pid     int
 	inside  bool
 	gateway bool
+	// id is the session id Claude Code sends with every request, which the daemon routes by.
+	id string
 }
 
 func currentSession() claudeSession {
 	pid, inside := callingSession()
-	return claudeSession{pid: pid, inside: inside, gateway: gatewayModeOn()}
+	return claudeSession{pid: pid, inside: inside, gateway: gatewayModeOn(), id: strings.TrimSpace(os.Getenv("CLAUDE_CODE_SESSION_ID"))}
 }
 
-// enableProject turns project on for session. models are the models agy offers the account when the caller just checked them, or nil.
+// callingSession reports whether the command runs inside a Claude Code session (a slash command, the Bash tool, or a process they started), and that session's process ID, which Claude Code passes to child processes as CLAUDE_PID. pid is 0 when the Claude Code version does not provide it.
+func callingSession() (pid int, inside bool) {
+	if os.Getenv("CLAUDECODE") != "1" {
+		return 0, false
+	}
+	pid, _ = strconv.Atoi(strings.TrimSpace(os.Getenv("CLAUDE_PID")))
+	return pid, true
+}
+
+// errOutsideSession: switching is per session, so it needs the session.
+var errOutsideSession = errors.New("NeoSwitch switches one Claude Code session at a time: run /neoswitch:on inside the session that should answer with Gemini. From a terminal, `neoswitch claude` starts Claude Code on Gemini")
+
+// enableProject switches session to Gemini. The project's settings point every session in it at the daemon; only this one, and others that opt in themselves, get Gemini, while the rest pass through to Claude. models are the models agy offers the account when the caller just checked them, or nil.
 func enableProject(project string, session claudeSession, models []string) error {
+	switch {
+	case !session.inside:
+		return errOutsideSession
+	case session.gateway:
+		return errors.New("this session was started through a gateway (" + daemon.EnvUseGateway + "), which keeps its own connection, so NeoSwitch cannot switch it. Start Claude Code without the gateway, then run /neoswitch:on")
+	case session.pid <= 1 || session.id == "":
+		return errors.New("this Claude Code version does not tell NeoSwitch which session is running it, so it cannot switch it. Update Claude Code, then run /neoswitch:on")
+	case envTrue("CLAUDE_CODE_USE_BEDROCK") || envTrue("CLAUDE_CODE_USE_VERTEX"):
+		return errors.New("this session reaches Claude through Amazon Bedrock or Google Vertex AI, which do not use ANTHROPIC_BASE_URL, so NeoSwitch cannot switch it")
+	}
 	kind, _, err := resolveBackend()
 	if err != nil {
 		return err
@@ -114,31 +139,26 @@ func enableProject(project string, session claudeSession, models []string) error
 	if err != nil {
 		return err
 	}
-	pid, inside := session.pid, session.inside
-	var notice string
-	tracked := false
-	if inside && !session.gateway && pid > 1 {
-		if tracked, notice, err = serveSession(dir, &state, pid, projectKey(project)); err != nil {
-			return fmt.Errorf("NeoSwitch was not turned on, so this session keeps using Claude: %w", err)
+	// The project's other sessions pass through to where they went before: Anthropic, or the gateway the user's environment names.
+	if base := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); !strings.HasPrefix(base, "http://127.0.0.1:") && !strings.HasPrefix(base, "https://127.0.0.1:") {
+		if state, err = daemon.SaveUpstream(dir, state, base); err != nil {
+			return err
 		}
 	}
-	if err := daemon.Enable(project, state); err != nil {
+	key := projectKey(project)
+	notice, err := serveSession(dir, &state, daemon.Session{PID: session.pid, Project: key, ID: session.id, OptIn: true})
+	if err != nil {
+		return fmt.Errorf("NeoSwitch was not turned on, so this session keeps using Claude: %w", err)
+	}
+	// Registered before written: the daemon removes the settings only when no registered session needs them.
+	bundle, err := daemon.WriteBundle(dir, userExtraCAs(dir))
+	if err != nil {
 		return err
 	}
-	fmt.Printf("NeoSwitch is on for %s.\n", project)
-	switch {
-	case !inside:
-		fmt.Println("New Claude Code sessions in this project use Gemini, until the last of them closes; the project then goes back to Claude. Sessions already open here that were not started through a gateway switch with their next message; run /neoswitch:on in them so NeoSwitch answers them.")
-	case session.gateway:
-		fmt.Println("This session was started through a gateway (" + daemon.EnvUseGateway + ") and keeps its connection. Start a new Claude Code session in this project to use Gemini.")
-	case pid <= 1:
-		fmt.Println("This Claude Code version does not tell NeoSwitch which session is running it, so this session cannot use Gemini. Start a new Claude Code session in this project.")
-	case tracked:
-		fmt.Println("This session uses Gemini from your next message, and so do new Claude Code sessions in this project while it is open. When the last of them closes, the project goes back to Claude; run /neoswitch:on to use Gemini again. Other Claude Code windows already open here switch too; run /neoswitch:on in each of them so NeoSwitch keeps answering them after this window closes.")
-	default:
-		// A daemon from before project tracking serves this session, so the project stays on until /neoswitch:off.
-		fmt.Println("This session uses Gemini from your next message, and so do new Claude Code sessions in this project until you run /neoswitch:off. Other Claude Code windows already open here switch too; run /neoswitch:on in each of them so NeoSwitch keeps answering them after this window closes.")
+	if err := daemon.Enable(key, state, daemon.Route{Bundle: bundle, UserHeaders: userHeaders()}); err != nil {
+		return err
 	}
+	fmt.Println("This session uses Gemini from your next message (this reply may still come from Claude). Other sessions keep using Claude: windows open in this project and new ones pass their requests through NeoSwitch to Claude unchanged while this session is open. /neoswitch:off returns this session to Claude; when it closes, the project goes back to how it was.")
 	if notice != "" {
 		fmt.Println(notice)
 	}
@@ -152,13 +172,22 @@ func enableProject(project string, session claudeSession, models []string) error
 	return nil
 }
 
-// callingSession reports whether the command runs inside a Claude Code session (a slash command, the Bash tool, or a process they started), and that session's process ID, which Claude Code passes to child processes as CLAUDE_PID. pid is 0 when the Claude Code version does not provide it.
-func callingSession() (pid int, inside bool) {
-	if os.Getenv("CLAUDECODE") != "1" {
-		return 0, false
+// userExtraCAs is the CA file the user's environment adds, which NeoSwitch's bundle keeps, or "" when that is NeoSwitch's own bundle.
+func userExtraCAs(dir string) string {
+	path := strings.TrimSpace(os.Getenv("NODE_EXTRA_CA_CERTS"))
+	if path == daemon.BundlePath(dir) {
+		return ""
 	}
-	pid, _ = strconv.Atoi(strings.TrimSpace(os.Getenv("CLAUDE_PID")))
-	return pid, true
+	return path
+}
+
+// userHeaders are the custom headers of the user's environment, which NeoSwitch's token header must not replace; "" when they are NeoSwitch's own.
+func userHeaders() string {
+	headers := os.Getenv("ANTHROPIC_CUSTOM_HEADERS")
+	if strings.Contains(headers, daemon.TokenHeader+":") {
+		return ""
+	}
+	return headers
 }
 
 // projectKey names a project the same way whichever path reached it, such as a symlink, so the daemon sees two sessions of one project as one.
@@ -170,36 +199,36 @@ func projectKey(project string) string {
 }
 
 // serveSession makes the shared daemon serve the Claude Code process pid, starting it with the configured backend when none is running. The notice is non-empty when an already running daemon serves a different setup than the one configured now.
-// serveSession attaches pid to the daemon. A saved port that another program took is replaced in *state, so the settings written afterwards point at the new one.
-func serveSession(dir string, state *daemon.State, pid int, project string) (tracked bool, notice string, err error) {
+// serveSession attaches session to the daemon, starting it when needed. A saved port that another program took is replaced in *state, so the settings written afterwards point at the new one.
+func serveSession(dir string, state *daemon.State, session daemon.Session) (notice string, err error) {
 	kind, _, err := resolveBackend()
 	if err != nil {
-		return false, "", err
+		return "", err
 	}
 	// Pinning the kind makes the daemon spawned below, whose environment drops Claude Code's variables, serve the backend checked here.
 	_, model, label, err := configuredBackend(context.Background())
 	if err != nil {
-		return false, "", err
+		return "", err
 	}
 	_ = os.Setenv(backendEnv, kind)
 	spawn := func() error { return spawnDaemon(dir) }
-	tracked, err = daemon.Attach(*state, pid, project, spawn)
+	_, err = daemon.AttachSession(*state, session, spawn)
 	var busy *daemon.PortInUseError
 	if errors.As(err, &busy) {
 		moved, moveErr := daemon.MovePort(dir, *state)
 		if moveErr != nil {
-			return false, "", moveErr
+			return "", moveErr
 		}
 		*state = moved
-		tracked, err = daemon.Attach(*state, pid, project, spawn)
+		_, err = daemon.AttachSession(*state, session, spawn)
 	}
 	if err != nil {
-		return false, "", fmt.Errorf("NeoSwitch could not start (details are in %s)", filepath.Join(dir, "daemon.log"))
+		return "", fmt.Errorf("NeoSwitch could not start (details are in %s)", filepath.Join(dir, "daemon.log"))
 	}
 	if info, running := daemon.Status(*state); running && (info.Backend != "" && info.Backend != label || info.Version != version) {
-		return tracked, attachNotice("", model, label, info, running, false), nil
+		return attachNotice("", model, label, info, running, false), nil
 	}
-	return tracked, "", nil
+	return "", nil
 }
 
 func off(args []string) error {
@@ -220,14 +249,29 @@ func off(args []string) error {
 		return err
 	}
 	if !ok {
-		fmt.Printf("NeoSwitch was never turned on; %s is unchanged.\n", project)
+		fmt.Println("This session uses Claude; NeoSwitch was never turned on.")
 		return nil
 	}
-	if err := daemon.Disable(project, state); err != nil {
-		return err
+	// The session goes back to Claude from its next request: the daemon passes it through with the user's own login. The project settings stay only while another session of the project still uses Gemini.
+	session := currentSession()
+	wasOn, running := false, false
+	if session.id != "" {
+		wasOn, running = daemon.OptOut(state, session.id)
 	}
-	// A running session keeps env it already applied from the project settings after the entries are removed, so a session on NeoSwitch stays there; it stays attached to the daemon, which keeps answering it until it closes.
-	fmt.Printf("NeoSwitch is off for %s. New Claude Code sessions here use Anthropic again; sessions already open keep their current connection until they are closed.\n", project)
+	if !running {
+		// No daemon to ask: no session of the project can still be on Gemini.
+		if err := daemon.Disable(projectKey(project), state); err != nil {
+			return err
+		}
+	}
+	switch {
+	case wasOn:
+		fmt.Println("This session uses Claude from your next message, with your own Claude login.")
+	case os.Getenv("ANTHROPIC_BASE_URL") == state.BaseURL() && !running:
+		fmt.Println("NeoSwitch is not running, so this session cannot answer. Start a new Claude Code session: it uses Claude.")
+	default:
+		fmt.Println("This session already uses Claude.")
+	}
 	return nil
 }
 
@@ -260,35 +304,30 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 			return err
 		}
 	}
-	// The session inherits the project's settings when it starts, so its ANTHROPIC_BASE_URL tells whether this session uses NeoSwitch, which can differ from the project right after on or off.
-	session := ok && os.Getenv("ANTHROPIC_BASE_URL") == state.BaseURL()
+	// The daemon routes by session, so it is the one that knows whether this session uses Gemini; its env only tells whether its requests pass through NeoSwitch at all.
+	through := ok && os.Getenv("ANTHROPIC_BASE_URL") == state.BaseURL()
 	// configuredBackend checks credentials and agy locally without calling the model, so a missing sign-in is reported instead of a route that cannot work.
 	_, model, label, backendErr := configuredBackend(context.Background())
 	var info daemon.Info
 	running := false
-	if ok && (enabled || session) {
-		info, running = daemon.Status(state)
+	if ok {
+		info, running = daemon.StatusOf(state, currentSession().id)
 	}
+	session := info.OptedIn
 	switch {
-	case !enabled && session:
-		fmt.Fprintln(w, "NeoSwitch is off for this project, but this session still uses it.")
-		fmt.Fprintln(w, "Start a new Claude Code session here to go back to Claude.")
-	case !enabled && backendErr != nil:
-		fmt.Fprintln(w, "This project uses Claude.")
+	case !session && through && !running:
+		fmt.Fprintln(w, "This session's requests go through NeoSwitch, which is not running, so it cannot answer.")
+		fmt.Fprintln(w, "Start a new Claude Code session: it uses Claude.")
+	case !session && backendErr != nil:
+		fmt.Fprintln(w, "This session uses Claude.")
 		fmt.Fprintln(w, sentence(backendErr.Error()))
-	case !enabled:
-		fmt.Fprintln(w, "This project uses Claude.")
-		fmt.Fprintf(w, "Run /neoswitch:on to switch it to %s.\n", modelName(model))
-	case backendErr != nil:
-		fmt.Fprintln(w, "NeoSwitch is on for this project, but it cannot reach a model.")
-		fmt.Fprintln(w, sentence(backendErr.Error()))
-		fmt.Fprintln(w, "Until then, run /neoswitch:off and start a new session to go back to Claude.")
 	case !session:
-		fmt.Fprintln(w, "NeoSwitch is on for this project, but this session still uses Claude.")
-		fmt.Fprintf(w, "Run /neoswitch:on to use %s from this session's next message.\n", modelName(model))
-	case !running:
-		fmt.Fprintf(w, "This session is set to use %s, but NeoSwitch is not running, so it cannot answer.\n", modelName(model))
-		fmt.Fprintln(w, "Run /neoswitch:on to restart it, or /neoswitch:off and a new session to go back to Claude.")
+		fmt.Fprintln(w, "This session uses Claude.")
+		fmt.Fprintf(w, "Run /neoswitch:on to answer with %s from this session's next message.\n", modelName(model))
+	case backendErr != nil:
+		fmt.Fprintln(w, "This session is switched to NeoSwitch, but NeoSwitch cannot reach a model.")
+		fmt.Fprintln(w, sentence(backendErr.Error()))
+		fmt.Fprintln(w, "Until then, run /neoswitch:off to continue on Claude in this session.")
 	default:
 		fmt.Fprintf(w, "This session uses %s through %s, and NeoSwitch is running.\n", modelName(model), plainLabel(label))
 		switch {
@@ -297,7 +336,7 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 		case info.Version != version:
 			fmt.Fprintln(w, "NeoSwitch was updated, but this session still uses the earlier version. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to use the update.")
 		default:
-			fmt.Fprintln(w, "Run /neoswitch:off to go back to Claude.")
+			fmt.Fprintln(w, "Run /neoswitch:off to continue on Claude in this session.")
 		}
 	}
 	if notice := updateNotice(dir); notice != "" {
@@ -357,54 +396,59 @@ func sentence(message string) string {
 func attach(args []string) error {
 	flags := flag.NewFlagSet("attach", flag.ContinueOnError)
 	pid := flags.Int("pid", 0, "Claude Code process to serve")
+	session := flags.String("session", "", "its session id")
+	quiet := flags.Bool("quiet", false, "only make sure the daemon runs, as before every prompt")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	message := hookMessage
+	if *quiet {
+		// Before a prompt nothing is shown: the hook only keeps the route answering.
+		message = func(string) error { return nil }
+	}
 	dir, err := daemon.Dir()
 	if err != nil {
-		return hookMessage(err.Error())
+		return message(err.Error())
 	}
 	state, ok, err := daemon.LoadState(dir)
-	if err != nil {
-		return hookMessage(err.Error())
+	if err != nil || !ok {
+		return nil
 	}
-	// The hook inherits the session's settings env, so a matching base URL means this project is routed through NeoSwitch. It is the URL the session uses unless gateway mode overrides it, which is handled below.
-	if !ok || os.Getenv("ANTHROPIC_BASE_URL") != state.BaseURL() {
+	base := os.Getenv("ANTHROPIC_BASE_URL")
+	opted := false
+	if *session != "" {
+		info, _ := daemon.StatusOf(state, *session)
+		opted = info.OptedIn
+	}
+	routed := base == state.BaseURL()
+	if !routed && !opted {
+		if legacyRoute(base) && !*quiet {
+			// Settings of a NeoSwitch from before TLS that no daemon serves any more: this session cannot answer, and the next one should not inherit them.
+			if project, err := projectDir(nil); err == nil {
+				_ = daemon.Disable(projectKey(project), state)
+			}
+			if _, running := daemon.Status(state); !running {
+				return message("NeoSwitch was updated, and this session still points at the earlier version, which is no longer running, so it cannot answer. Start a new session: it uses Claude, and /neoswitch:on switches it to Gemini.")
+			}
+		}
 		return nil
 	}
 	if *pid <= 1 {
-		return hookMessage("NeoSwitch: the SessionStart hook did not pass the Claude Code process ID")
+		return message("NeoSwitch: the SessionStart hook did not pass the Claude Code process ID")
 	}
-	// Every routed session refreshes the update cache, including one blocked by a setup problem below: a fix may be what it needs.
-	startUpdateCheck(dir)
-	// Projects enabled before `neoswitch on` turned gateway mode off still let a gateway launcher's ANTHROPIC_BASE_URL win. The running session cannot be changed any more, so fix the project for the next one and say so instead of letting status claim a route the session may not use.
-	var notice string
-	if gatewayModeOn() {
-		project, err := projectDir(nil)
-		if err == nil {
-			err = daemon.Enable(project, state)
-		}
-		if err != nil {
-			return hookMessage("NeoSwitch: Claude Code was started in gateway mode (" + daemon.EnvUseGateway + "), which can send this session's requests to the gateway instead of NeoSwitch, and turning it off for this project failed: " + err.Error())
-		}
-		notice = "NeoSwitch: Claude Code was started in gateway mode (" + daemon.EnvUseGateway + "), which can send this session's requests to the gateway instead of Gemini. This project's .claude/settings.local.json now turns gateway mode off; start a new session and run /neoswitch:on in it to use NeoSwitch."
+	if !*quiet {
+		// Every routed session refreshes the update cache: a fix may be what it needs.
+		startUpdateCheck(dir)
 	}
-	kind, _, err := resolveBackend()
-	if err != nil {
-		return hookMessage(sessionBlocked(err.Error()))
+	// Sessions that only pass through to Claude need the daemon as much as the opted-in ones, and do not need a model: a backend problem must not take their Claude away.
+	if kind, _, err := resolveBackend(); err == nil {
+		_ = os.Setenv(backendEnv, kind)
 	}
-	// configuredBackend also moves a Gemini key saved by an earlier plugin version into GEMINI_API_KEY. Pinning the kind makes the daemon spawned below, whose environment drops Claude Code's variables, serve the backend checked here.
-	_, model, label, err := configuredBackend(context.Background())
-	if err != nil {
-		return hookMessage(sessionBlocked(err.Error()))
-	}
-	_ = os.Setenv(backendEnv, kind)
-	// The hook runs in the session's project, which CLAUDE_PROJECT_DIR names.
 	project := ""
 	if path, err := projectDir(nil); err == nil {
 		project = projectKey(path)
 	}
-	tracked, err := daemon.Attach(state, *pid, project, func() error { return spawnDaemon(dir) })
+	_, err = daemon.AttachSession(state, daemon.Session{PID: *pid, ID: *session}, func() error { return spawnDaemon(dir) })
 	if err != nil {
 		var busy *daemon.PortInUseError
 		if errors.As(err, &busy) {
@@ -414,12 +458,27 @@ func attach(args []string) error {
 				_ = daemon.Disable(project, state)
 			}
 			_, _ = daemon.MovePort(dir, state)
-			return hookMessage("NeoSwitch: another program on this computer took port " + port + ", which NeoSwitch used, so this session cannot answer. NeoSwitch moved to a new port: run /neoswitch:on to switch this session again, or start a new session, which uses Claude.")
+			return message("NeoSwitch: another program on this computer took port " + port + ", which NeoSwitch used, so this session cannot answer. Start a new session, which uses Claude, and run /neoswitch:on in it to use Gemini.")
 		}
-		return hookMessage("NeoSwitch could not start, so this session cannot answer. Start a new Claude Code session to try again, or run /neoswitch:off to go back to Claude. Details are in " + filepath.Join(dir, "daemon.log") + ".")
+		return message("NeoSwitch could not start, so this session cannot answer. Start a new Claude Code session, which uses Claude. Details are in " + filepath.Join(dir, "daemon.log") + ".")
+	}
+	if *quiet {
+		return nil
+	}
+	if !opted {
+		return message(joinNotes("NeoSwitch: another session in this project uses Gemini, so this one reaches Claude through NeoSwitch, unchanged. Run /neoswitch:on to switch this one to Gemini too.", updateNotice(dir)))
+	}
+	_, model, label, err := configuredBackend(context.Background())
+	if err != nil {
+		return message(sessionBlocked(err.Error()))
 	}
 	info, running := daemon.Status(state)
-	return hookMessage(joinNotes(attachNotice(notice, model, label, info, running, tracked), updateNotice(dir)))
+	return message(joinNotes(attachNotice("", model, label, info, running, true), updateNotice(dir)))
+}
+
+// legacyRoute reports a base URL written by a NeoSwitch from before TLS.
+func legacyRoute(base string) bool {
+	return strings.HasPrefix(base, "http://127.0.0.1:")
 }
 
 // sessionBlocked reports a setup problem found at session start, followed by the way back to Claude, because the session cannot answer until it is fixed.
@@ -460,7 +519,7 @@ func attachNotice(notice, model, label string, info daemon.Info, running, tracke
 	case notice == "":
 		notes = append(notes, "NeoSwitch: this session uses "+modelName(model)+" through "+plainLabel(label)+". Ignore the Claude model name in the header. The first reply can take a while.")
 		if tracked {
-			notes = append(notes, "When the last session here using NeoSwitch closes, this project goes back to Claude.")
+			notes = append(notes, "/neoswitch:off continues this session on Claude.")
 		}
 	}
 	return strings.Join(notes, " ")
@@ -546,9 +605,11 @@ func runDaemon() error {
 	if !ok {
 		return fmt.Errorf("NeoSwitch was never turned on; run /neoswitch:on first")
 	}
+	// The sessions that pass through to Claude need the daemon whatever happened to the model side, so a backend problem does not stop it: the opted-in sessions get an answer saying what to fix.
 	backend, model, backendName, err := configuredBackend(context.Background())
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "NeoSwitch daemon: no model: %v\n", err)
+		backend, backendName = nil, "no model"
 	}
 	if closer, ok := backend.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
@@ -560,7 +621,19 @@ func runDaemon() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(os.Stderr, "NeoSwitch daemon on %s (%s, model %s)\n", state.BaseURL(), backendName, model)
-	handler := server.NewHandler(server.Config{Backend: backend, Model: model, Token: state.Token})
+	config := server.Config{Model: model, Token: state.Token}
+	if backend != nil {
+		config.Backend = backend
+	}
+	var passthrough http.Handler
+	if state.TLS {
+		// The router checks NeoSwitch's token header and strips the user's credential before the proxy sees a request.
+		config.Token = ""
+		if passthrough, err = daemon.NewPassthrough(state); err != nil {
+			return err
+		}
+	}
+	handler := server.NewHandler(config)
 	// Routing lasts as long as the sessions using it: a project no attached session uses goes back to Claude, so the next session there, and its claude.ai connectors, start as before.
 	release := func(project string) {
 		if err := daemon.Disable(project, state); err != nil {
@@ -569,7 +642,7 @@ func runDaemon() error {
 		}
 		fmt.Fprintf(os.Stderr, "NeoSwitch: %s is back on Claude\n", project)
 	}
-	if err := daemon.Run(ctx, state, handler, daemon.Options{Backend: backendName, Version: version, Release: release}); err != nil {
+	if err := daemon.Run(ctx, state, handler, daemon.Options{Backend: backendName, Version: version, Release: release, Passthrough: passthrough}); err != nil {
 		return err
 	}
 	if ctx.Err() != nil {

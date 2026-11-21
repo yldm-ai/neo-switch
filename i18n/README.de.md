@@ -37,7 +37,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 > [!WARNING]
 > Die [Nutzungsbedingungen von Google Antigravity](https://antigravity.google/terms) (Abschnitt 6) verbieten es, Antigravity über andere Tools zu nutzen, und NeoSwitch ist ein solches Tool. Google kann die Antigravity-Konten von Personen, die das tun, sperren oder schließen. `/neoswitch:login` wiederholt diese Warnung jedes Mal. Melden Sie sich nicht an, wenn Sie dieses Risiko nicht akzeptieren.
 
-**3. Senden Sie Ihre nächste Nachricht.** Das Fenster, in dem Sie den Befehl ausgeführt haben, nutzt ab seiner nächsten Nachricht Gemini 4 Neon, ebenso neue Sitzungen in diesem Projekt. Wenn die Antwort des Befehls Sie stattdessen zum Neustart auffordert, weil Claude Code über ein Gateway gestartet wurde oder andere Claude-Code-Fenster noch eine frühere NeoSwitch-Einrichtung nutzen, schließen Sie die genannten Fenster und starten Sie `claude` im selben Projekt erneut. Wenn die letzte Sitzung hier, die NeoSwitch nutzt, geschlossen wird, kehrt das Projekt zu Claude zurück, sodass Ihre nächste Sitzung mit Claude beginnt; führen Sie `/neoswitch:on` aus, um wieder Gemini 4 Neon zu nutzen.
+**3. Senden Sie Ihre nächste Nachricht.** Das Fenster, in dem Sie den Befehl ausgeführt haben, nutzt ab seiner nächsten Nachricht Gemini 4 Neon. Andere Fenster und neue Sitzungen nutzen weiter Claude, mit Ihrer eigenen Claude-Anmeldung und Ihren Connectors: Führen Sie `/neoswitch:on` in jeder Sitzung aus, die mit Gemini 4 Neon antworten soll. Wenn die Antwort des Befehls Sie stattdessen zum Neustart auffordert, weil Claude Code über ein Gateway gestartet wurde, starten Sie `claude` im selben Projekt ohne das Gateway erneut.
 
 ## Was Sie sehen werden
 
@@ -54,9 +54,9 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 |---|---|
 | Der Sitzungshinweis sagt, NeoSwitch sei noch nicht eingerichtet | Führen Sie `/neoswitch:login` aus. Ihre nächste Nachricht nutzt Gemini 4 Neon. |
 | Eine Meldung sagt, `agy` sei nicht installiert | `/neoswitch:login` konnte es nicht selbst installieren. Führen Sie `curl -fsSL https://antigravity.google/cli/install.sh \| bash` in einem Terminal aus oder installieren Sie es über [Googles Download-Seite](https://antigravity.google/download), und führen Sie dann `/neoswitch:login` erneut aus. |
-| Jede Nachricht scheitert mit einem Verbindungsfehler, oder der Sitzungshinweis sagt, diese Sitzung könne nicht antworten | Führen Sie im selben Projekt `/neoswitch:off` aus. Es schaltet das Projekt zurück, auch wenn seine eigene Antwort ebenfalls einen Verbindungsfehler zeigt. Geben Sie dann `/exit` ein und starten Sie `claude` erneut: Sie sind wieder bei Claude, und `/neoswitch:status` sagt Ihnen, was zu beheben ist. |
+| Jede Nachricht scheitert mit einem Verbindungsfehler, oder der Sitzungshinweis sagt, diese Sitzung könne nicht antworten | Führen Sie `/neoswitch:off` aus: Diese Sitzung arbeitet ab ihrer nächsten Nachricht mit Claude weiter, auch wenn die Antwort auf den Befehl selbst scheitert. Scheitern Nachrichten weiter, geben Sie `/exit` ein und starten Sie `claude` erneut: Eine neue Sitzung nutzt Claude, und `/neoswitch:status` sagt Ihnen, was zu beheben ist. |
 | Der Hinweis sagt, andere Claude-Code-Fenster teilten noch die bisherige Einrichtung | Schließen Sie alle Claude-Code-Fenster, öffnen Sie Claude Code erneut und führen Sie `/neoswitch:on` aus. |
-| Eine Warnung sagt, claude.ai-Connectors seien deaktiviert, weil eine andere Anmeldequelle gesetzt ist | Das ist erwartet, solange diese Sitzung NeoSwitch nutzt: Sein lokaler Zugriffsschlüssel hat Vorrang vor Ihrer claude.ai-Anmeldung. Die Connectors sind in Ihrer nächsten Sitzung zurück, sobald das Projekt zu Claude zurückkehrt, also wenn die letzte Sitzung mit NeoSwitch geschlossen wird oder nach `/neoswitch:off`. |
+| Eine Warnung sagt, claude.ai-Connectors seien deaktiviert, weil eine andere Anmeldequelle gesetzt ist | NeoSwitch verursacht das nicht mehr; eine frühere Version tat es. Aktualisieren Sie das Plugin (siehe unten). Bleibt die Warnung, setzt ein anderes Werkzeug `ANTHROPIC_AUTH_TOKEN` oder `ANTHROPIC_API_KEY` für Claude Code. |
 | Der Hinweis sagt, ein anderes Programm belege den Port, den NeoSwitch braucht | Schließen Sie dieses Programm und starten Sie Claude Code erneut, oder führen Sie `/neoswitch:off` aus. |
 | Der Hinweis sagt, NeoSwitch habe sein Programm nicht herunterladen können | Prüfen Sie Ihre Internetverbindung und starten Sie Claude Code erneut. |
 | `/neoswitch:login` ist ein unbekannter Befehl | Aktualisieren Sie das Plugin (siehe unten), starten Sie Claude Code neu und führen Sie `/reload-plugins` aus. |
@@ -64,7 +64,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 
 ## Ausschalten, aktualisieren oder entfernen
 
-- `/neoswitch:off` schaltet dieses Projekt für neue Sitzungen zurück auf Claude; eine Sitzung, die bereits Gemini 4 Neon nutzt, behält es, bis Sie `/exit` eingeben. `/neoswitch:on` schaltet das Projekt ab Ihrer nächsten Nachricht wieder auf Gemini 4 Neon, ohne dass Sie etwas neu einrichten. Das Schließen der letzten Sitzung, die in einem Projekt NeoSwitch nutzt, bewirkt dasselbe.
+- `/neoswitch:off` schaltet diese Sitzung ab ihrer nächsten Nachricht zurück auf Claude, mit Ihrer eigenen Claude-Anmeldung. `/neoswitch:on` schaltet sie wieder auf Gemini 4 Neon, ohne dass Sie etwas neu einrichten. Mit dem Schließen einer Sitzung endet ihre Umschaltung: Jede neue Sitzung beginnt mit Claude.
 
 Um von Hand zu aktualisieren, führen Sie dies in einem Terminal aus und schließen Sie dann alle Claude-Code-Fenster und öffnen Sie sie wieder:
 
@@ -77,7 +77,7 @@ Wenn Sie den Marketplace unter seinem alten Namen `yldm-ai/NeoSwitch` / `yldm-ai
 
 So entfernen Sie NeoSwitch:
 
-1. Führen Sie zuerst in jedem Projekt, das Sie umgeschaltet haben, `/neoswitch:off` aus. Ein eingeschaltet gelassenes Projekt zeigt weiter auf NeoSwitch und antwortet nicht mehr, sobald NeoSwitch entfernt ist. Wenn Sie das Plugin schon entfernt haben, öffnen Sie in jedem solchen Projekt `.claude/settings.local.json` und löschen Sie `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` und `CLAUDE_CODE_USE_GATEWAY` aus dem `env`-Objekt.
+1. Führen Sie zuerst in jedem Projekt, das Sie umgeschaltet haben, `/neoswitch:off` aus. Ein eingeschaltet gelassenes Projekt zeigt weiter auf NeoSwitch und antwortet nicht mehr, sobald NeoSwitch entfernt ist. Wenn Sie das Plugin schon entfernt haben, öffnen Sie in jedem solchen Projekt `.claude/settings.local.json` und löschen Sie `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`, `CLAUDE_CODE_USE_GATEWAY` und, von früheren Versionen, `ANTHROPIC_AUTH_TOKEN` aus dem `env`-Objekt.
 2. Schließen Sie die Claude-Code-Fenster, die NeoSwitch nutzen, und führen Sie dies in einem Terminal aus:
 
 ```bash
@@ -96,9 +96,9 @@ Die Google-Anmeldung speichert `agy`, nicht NeoSwitch, und sie bleibt bestehen; 
 
 ## Was NeoSwitch ändert
 
-In jedem Projekt, das Sie einschalten, fügt NeoSwitch dem `env`-Objekt von `.claude/settings.local.json` drei Einträge hinzu, und `/neoswitch:off` oder das Schließen der letzten Sitzung, die dort NeoSwitch nutzt, entfernt sie wieder:
+Solange eine Sitzung in einem Projekt Gemini 4 Neon nutzt, fügt NeoSwitch dem `env`-Objekt der `.claude/settings.local.json` dieses Projekts vier Einträge hinzu und entfernt sie, sobald keine Sitzung dort es mehr nutzt:
 
-- `ANTHROPIC_BASE_URL` und `ANTHROPIC_AUTH_TOKEN` leiten die neuen Claude-Code-Sitzungen des Projekts an NeoSwitch auf diesem Computer. Das Token öffnet nur NeoSwitch auf diesem Computer; es ist keine Google- oder Anthropic-Zugangsberechtigung.
+- `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` und `NODE_EXTRA_CA_CERTS` schicken die Claude-Code-Anfragen des Projekts über eine verschlüsselte Verbindung, die nur NeoSwitch beantworten kann, an NeoSwitch auf diesem Computer. NeoSwitch beantwortet die umgeschalteten Sitzungen mit Gemini 4 Neon und reicht alle anderen Anfragen unverändert an Claude weiter, mit Ihrer eigenen Claude-Anmeldung, die es weder speichert noch protokolliert. Der Header enthält einen Schlüssel, der nur NeoSwitch auf diesem Computer öffnet.
 - `CLAUDE_CODE_USE_GATEWAY=0` lässt diese Sitzungen direkt mit NeoSwitch sprechen. Manche Tools, die Claude Code über ein anderes Gateway starten, schalten den Gateway-Modus ein, und Claude Code würde NeoSwitch dann ignorieren.
 
 In einem Git-Projekt trägt NeoSwitch `.claude/settings.local.json` außerdem in die klon-eigene Ausschlussliste (`.git/info/exclude`) ein, damit das Token nicht in Commits landet; Ihre `.gitignore` bleibt unverändert.

@@ -37,7 +37,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 > [!WARNING]
 > [Google Antigravity 서비스 약관](https://antigravity.google/terms)(제6조)은 다른 도구를 통해 Antigravity를 쓰는 것을 금지하며, NeoSwitch는 그런 도구에 해당합니다. Google은 그렇게 쓰는 사람의 Antigravity 계정을 정지하거나 해지할 수 있습니다. `/neoswitch:login`은 매번 이 경고를 다시 보여 줍니다. 이 위험을 받아들일 수 없다면 로그인하지 마세요.
 
-**3. 다음 메시지를 보냅니다.** 명령을 실행한 창은 다음 메시지부터 Gemini 4 Neon을 쓰고, 이 프로젝트의 새 세션도 마찬가지입니다. 명령의 답변이 대신 다시 시작하라고 하면(Claude Code를 게이트웨이로 시작했거나 다른 Claude Code 창이 아직 NeoSwitch의 이전 설정을 쓰는 경우), 안내된 창을 닫은 뒤 같은 프로젝트에서 `claude`를 다시 실행하세요. 이 프로젝트에서 NeoSwitch를 쓰는 마지막 세션을 닫으면 프로젝트가 Claude로 돌아가서 다음 세션은 Claude로 시작합니다. Gemini 4 Neon을 다시 쓰려면 `/neoswitch:on`을 실행하세요.
+**3. 다음 메시지를 보내세요.** 명령을 실행한 창은 다음 메시지부터 Gemini 4 Neon을 씁니다. 다른 창과 새 세션은 본인의 Claude 로그인과 connectors로 계속 Claude를 씁니다. Gemini 4 Neon으로 답하게 할 세션마다 `/neoswitch:on`을 실행하세요. 명령의 답이 재시작을 요청하면(Claude Code를 게이트웨이를 통해 시작한 경우), 게이트웨이 없이 같은 프로젝트에서 `claude`를 다시 시작하세요.
 
 ## 전환 후 보이는 것
 
@@ -54,9 +54,9 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 |---|---|
 | 세션 시작 안내에 NeoSwitch가 아직 설정되지 않았다고 나옴 | `/neoswitch:login`을 실행하세요. 다음 메시지부터 Gemini 4 Neon을 씁니다. |
 | `agy`가 설치되어 있지 않다는 메시지가 나옴 | `/neoswitch:login`이 자동으로 설치하지 못한 경우입니다. 터미널에서 `curl -fsSL https://antigravity.google/cli/install.sh \| bash`를 실행하거나 [Google 다운로드 페이지](https://antigravity.google/download)에서 설치한 뒤 `/neoswitch:login`을 다시 실행하세요. |
-| 모든 메시지가 연결 오류로 실패하거나, 세션 시작 안내에 이 세션은 답할 수 없다고 나옴 | 같은 프로젝트에서 `/neoswitch:off`를 실행하세요. 그 응답에도 연결 오류가 보이더라도 프로젝트는 이미 되돌려졌습니다. `/exit`를 입력하고 `claude`를 다시 시작하면 Claude로 돌아오며, `/neoswitch:status`가 무엇을 고쳐야 하는지 알려 줍니다. |
+| 모든 메시지가 연결 오류로 실패하거나, 세션 시작 안내에 이 세션이 답할 수 없다고 나온다 | `/neoswitch:off`를 실행하세요. 이 명령의 답 자체가 실패해도 이 세션은 다음 메시지부터 Claude로 돌아갑니다. 그래도 메시지가 계속 실패하면 `/exit`를 입력하고 `claude`를 다시 시작하세요. 새 세션은 Claude를 쓰며, `/neoswitch:status`가 무엇을 고쳐야 하는지 알려 줍니다. |
 | 다른 Claude Code 창이 이전 설정을 함께 쓰고 있다고 나옴 | Claude Code 창을 모두 닫고 다시 연 뒤 `/neoswitch:on`을 실행하세요. |
-| 다른 인증 소스가 설정되어 claude.ai connectors가 비활성화되었다는 경고가 나온다 | 이 세션이 NeoSwitch를 쓰는 동안에는 정상입니다. 로컬 액세스 키가 claude.ai 로그인보다 우선합니다. 프로젝트가 Claude로 돌아가면(NeoSwitch를 쓰는 마지막 세션을 닫거나 `/neoswitch:off`를 실행하면) 다음 세션에서 connectors가 돌아옵니다. |
+| 다른 인증 소스가 설정되어 claude.ai connectors가 비활성화되었다는 경고가 나온다 | 지금의 NeoSwitch는 이 경고를 일으키지 않습니다. 이전 버전이 원인이었습니다. 플러그인을 업데이트하세요(아래 참고). 그래도 나오면 다른 도구가 Claude Code에 `ANTHROPIC_AUTH_TOKEN`이나 `ANTHROPIC_API_KEY`를 설정한 것입니다. |
 | NeoSwitch에 필요한 포트를 다른 프로그램이 쓰고 있다고 나옴 | 그 프로그램을 닫고 Claude Code를 다시 시작하거나 `/neoswitch:off`를 실행하세요. |
 | NeoSwitch가 프로그램을 내려받지 못했다고 나옴 | 인터넷 연결을 확인하고 Claude Code를 다시 시작하세요. |
 | `/neoswitch:login`이 알 수 없는 명령으로 나옴 | 플러그인을 업데이트하고(아래 참고) Claude Code를 다시 시작한 뒤 `/reload-plugins`를 실행하세요. |
@@ -64,7 +64,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 
 ## 끄기, 업데이트, 제거
 
-- `/neoswitch:off`는 이 프로젝트의 새 세션을 Claude로 되돌립니다. 이미 Gemini 4 Neon을 쓰는 세션은 `/exit`를 입력할 때까지 그대로입니다. `/neoswitch:on`은 다시 설정하지 않고 다음 메시지부터 프로젝트를 Gemini 4 Neon으로 다시 전환합니다. 프로젝트에서 NeoSwitch를 쓰는 마지막 세션을 닫아도 같습니다.
+- `/neoswitch:off`는 이 세션을 다음 메시지부터 본인의 Claude 로그인으로 Claude에 돌려놓습니다. `/neoswitch:on`은 다시 설정하지 않고 Gemini 4 Neon으로 다시 전환합니다. 세션을 닫으면 전환도 끝나며, 새 세션은 모두 Claude로 시작합니다.
 
 직접 업데이트하려면 터미널에서 다음을 실행한 뒤 Claude Code 창을 모두 닫았다가 다시 여세요.
 
@@ -77,7 +77,7 @@ claude plugin update neoswitch@neoswitch
 
 NeoSwitch를 제거하려면:
 
-1. 전환한 각 프로젝트에서 먼저 `/neoswitch:off`를 실행하세요. 켜진 채로 남은 프로젝트는 계속 NeoSwitch를 가리키므로 NeoSwitch가 사라지면 답하지 못합니다. 플러그인을 이미 제거했다면 해당 프로젝트마다 `.claude/settings.local.json`을 열고 `env` 객체에서 `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_GATEWAY`를 지우세요.
+1. 전환한 각 프로젝트에서 먼저 `/neoswitch:off`를 실행하세요. 켜진 채로 남은 프로젝트는 계속 NeoSwitch를 가리키므로 NeoSwitch가 사라지면 답하지 못합니다. 플러그인을 이미 제거했다면 해당 프로젝트마다 `.claude/settings.local.json`을 열고 `env` 객체에서 `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`, `CLAUDE_CODE_USE_GATEWAY`, 그리고 이전 버전의 `ANTHROPIC_AUTH_TOKEN`를 지우세요.
 2. NeoSwitch를 쓰는 Claude Code 창을 닫고 터미널에서 다음을 실행하세요.
 
 ```bash
@@ -96,9 +96,9 @@ Google 로그인 정보는 NeoSwitch가 아니라 `agy`가 보관하며 그대�
 
 ## NeoSwitch가 바꾸는 것
 
-켠 프로젝트마다 NeoSwitch는 `.claude/settings.local.json`의 `env` 객체에 세 항목을 추가하고, `/neoswitch:off`를 실행하거나 그 프로젝트에서 NeoSwitch를 쓰는 마지막 세션을 닫으면 다시 지웁니다.
+어떤 프로젝트의 세션이 Gemini 4 Neon을 쓰는 동안 NeoSwitch는 그 프로젝트의 `.claude/settings.local.json` 안 `env` 객체에 네 항목을 추가하고, 그곳에서 쓰는 세션이 없어지면 다시 지웁니다.
 
-- `ANTHROPIC_BASE_URL`과 `ANTHROPIC_AUTH_TOKEN`: 그 프로젝트의 새 Claude Code 세션을 이 컴퓨터의 NeoSwitch로 보냅니다. 이 토큰은 이 컴퓨터의 NeoSwitch에만 쓸 수 있으며 Google이나 Anthropic 자격 증명이 아닙니다.
+- `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`: 그 프로젝트의 Claude Code 요청을 NeoSwitch만 응답할 수 있는 암호화된 연결로 이 컴퓨터의 NeoSwitch에 보냅니다. 전환한 세션에는 Gemini 4 Neon이 답하고, 나머지 요청은 본인의 Claude 로그인 그대로 Claude에 넘깁니다. NeoSwitch는 그 로그인을 저장하지도 기록하지도 않습니다. 헤더의 키는 이 컴퓨터의 NeoSwitch에만 쓸 수 있습니다.
 - `CLAUDE_CODE_USE_GATEWAY=0`: 그 세션이 NeoSwitch에 직접 연결되게 합니다. 다른 게이트웨이를 통해 Claude Code를 실행하는 일부 도구는 게이트웨이 모드를 켜는데, 그러면 Claude Code가 NeoSwitch를 무시합니다.
 
 Git 프로젝트에서는 NeoSwitch가 `.claude/settings.local.json`을 해당 클론 전용 제외 목록(`.git/info/exclude`)에도 추가해 토큰이 커밋에 들어가지 않게 합니다. `.gitignore`는 건드리지 않습니다.

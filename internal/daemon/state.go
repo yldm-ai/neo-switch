@@ -3,13 +3,17 @@ package daemon
 
 import (
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // State is the proxy address and token shared by every enabled project. It is created once and reused so that settings written into projects stay valid across daemon restarts.
@@ -18,9 +22,34 @@ type State struct {
 	Token  string `json:"token"`
 	// Backend is the upstream the user chose, "antigravity", "gemini" or "openai"; empty means choose from the environment. /neoswitch:login sets it so a Gemini key exported for other tools does not override the account the user signed in with.
 	Backend string `json:"backend,omitempty"`
+	// TLS: the daemon serves HTTPS with NeoSwitch's local certificate. States from before it lack it; EnsureState moves them to TLS on a new port.
+	TLS bool `json:"tls,omitempty"`
+	// Upstream is where requests that do not go to Gemini are passed on, when it is not Anthropic's API: the ANTHROPIC_BASE_URL the user's sessions had before a project was switched, such as a company gateway.
+	Upstream string `json:"upstream,omitempty"`
+
+	dir string
 }
 
-func (s State) BaseURL() string { return "http://" + s.Listen }
+func (s State) BaseURL() string {
+	if s.TLS {
+		return "https://" + s.Listen
+	}
+	return "http://" + s.Listen
+}
+
+// client talks to the daemon, trusting only NeoSwitch's own CA.
+func (s State) client(timeout time.Duration) *http.Client {
+	transport := &http.Transport{}
+	if s.TLS {
+		config, err := clientTLS(s.dir)
+		if err != nil {
+			// No CA, no trust: every request fails, and nothing is sent to whoever holds the port.
+			config = &tls.Config{RootCAs: x509.NewCertPool()}
+		}
+		transport.TLSClientConfig = config
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
 
 // Dir is where NeoSwitch keeps its state file and daemon log.
 func Dir() (string, error) {
@@ -49,25 +78,53 @@ func LoadState(dir string) (State, bool, error) {
 	if err := json.Unmarshal(data, &s); err != nil || s.Listen == "" || s.Token == "" {
 		return State{}, false, fmt.Errorf("NeoSwitch's settings file %s is damaged. Delete it, then run /neoswitch:on again in every project where NeoSwitch was on", statePath(dir))
 	}
+	s.dir = dir
 	return s, true, nil
 }
 
 // EnsureState returns the existing state or creates one with a free loopback port and a random token. The file is private to the user because the token authorizes use of their Gemini quota.
+//
+// A state from before TLS moves to a new port with TLS: a daemon of the earlier version may still serve sessions on the old port, which keeps working for them until they end.
 func EnsureState(dir string) (State, error) {
-	if s, ok, err := LoadState(dir); err != nil || ok {
-		return s, err
+	s, ok, err := LoadState(dir)
+	if err != nil {
+		return State{}, err
+	}
+	// Renewing replaces the CA, which only sessions connecting from now on would trust: it waits until no daemon answers.
+	renew := !ok || !s.TLS
+	if ok && s.TLS {
+		_, running := Status(s)
+		renew = !running
+	}
+	if err := ensureTLS(dir, renew); err != nil {
+		return State{}, err
+	}
+	if ok && s.TLS {
+		return s, nil
 	}
 	addr, err := freeLoopbackPort()
 	if err != nil {
 		return State{}, err
 	}
-	var token [24]byte
-	_, _ = rand.Read(token[:])
-	s := State{Listen: addr, Token: hex.EncodeToString(token[:])}
+	if !ok {
+		var token [24]byte
+		_, _ = rand.Read(token[:])
+		s = State{Token: hex.EncodeToString(token[:])}
+	}
+	s.Listen, s.TLS, s.dir = addr, true, dir
 	if err := writeState(dir, s); err != nil {
 		return State{}, err
 	}
 	return s, nil
+}
+
+// SaveUpstream records where passthrough requests go; "" is Anthropic's API.
+func SaveUpstream(dir string, s State, upstream string) (State, error) {
+	if s.Upstream == upstream {
+		return s, nil
+	}
+	s.Upstream = upstream
+	return s, writeState(dir, s)
 }
 
 // MovePort gives NeoSwitch a new loopback port, keeping its token and backend. It is for a saved port that another program took, as can happen after a reboot: no NeoSwitch daemon can listen there any more, so nothing still pointing at it works either way.
@@ -77,6 +134,7 @@ func MovePort(dir string, s State) (State, error) {
 		return State{}, err
 	}
 	s.Listen = addr
+	s.dir = dir
 	return s, writeState(dir, s)
 }
 
@@ -97,6 +155,7 @@ func SaveBackend(dir, backend string) (State, error) {
 		return State{}, err
 	}
 	s.Backend = backend
+	s.dir = dir
 	return s, writeState(dir, s)
 }
 
