@@ -7,6 +7,17 @@ export NEOSWITCH_PLUGIN=1
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/neoswitch"
 bin="$cache/neoswitch-$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
+# Hooks that run after every reply or as a session ends pass --cached: they run whichever NeoSwitch binary is already here, even one older than the plugin source, and otherwise do nothing, rather than build or download in the middle of the user's session.
+if [ "${1:-}" = "--cached" ]; then
+	shift
+	for cached in "$bin" "$cache"/neoswitch-*; do
+		case $cached in *.tmp) continue ;; esac
+		if [ -f "$cached" ] && [ -x "$cached" ]; then
+			exec "$cached" "$@"
+		fi
+	done
+	exit 0
+fi
 if [ -x "$bin" ] && [ -z "$(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" \( -name '*.go' -o -name 'go.*' \) -print 2>/dev/null | head -n 1)" ]; then
 	exec "$bin" "$@"
 fi

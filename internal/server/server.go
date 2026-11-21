@@ -92,11 +92,12 @@ func NewHandler(config Config) http.Handler {
 // decode authenticates, parses and translates a Messages-shaped request, writing the Anthropic error response itself when any step fails.
 func decode(w http.ResponseWriter, r *http.Request, config Config) (anthropic.MessagesRequest, translate.Request, bool) {
 	if config.Token != "" && !authorized(r, config.Token) {
-		writeAPIError(w, http.StatusUnauthorized, "authentication_error", "invalid NeoSwitch token")
+		// Not 401: Claude Code would blame the user's Claude login. A session gets an outdated key when NeoSwitch's local state was recreated after the session applied it.
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "This session's NeoSwitch access key is out of date. Run /neoswitch:on to switch this session again, or run /neoswitch:off and start a new session to go back to Claude.")
 		return anthropic.MessagesRequest{}, translate.Request{}, false
 	}
 	if config.Backend == nil {
-		writeAPIError(w, http.StatusInternalServerError, "api_error", "no Gemini backend configured")
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "NeoSwitch has no model to answer with. Run /neoswitch:login, or run /neoswitch:off and start a new session to go back to Claude.")
 		return anthropic.MessagesRequest{}, translate.Request{}, false
 	}
 	var request anthropic.MessagesRequest
@@ -133,11 +134,17 @@ func authorized(r *http.Request, token string) bool {
 	return false
 }
 
-// upstreamStatus maps an upstream failure onto the status and error type Claude Code reacts to: 429 and 529 trigger its backoff, 400 and 403 are not retried, and "prompt is too long" triggers its context-compaction hint.
+// upstreamStatus maps an upstream failure onto the status and error type Claude Code reacts to: 429 and 529 trigger its backoff, 400 is shown as it is and not retried, and "prompt is too long" triggers its context-compaction hint.
+//
+// NeoSwitch never answers 401 or 403 for a failure of its own or of the Gemini side: Claude Code reads both as a problem with the user's Claude login and tells them to run /login, which would send them to fix a login that works.
 func upstreamStatus(err error) (int, string, string) {
 	var unavailable *translate.UnavailableError
 	if errors.As(err, &unavailable) {
-		return http.StatusForbidden, "permission_error", unavailable.Message
+		return http.StatusBadRequest, "invalid_request_error", unavailable.Message
+	}
+	var retryable *translate.RetryableError
+	if errors.As(err, &retryable) {
+		return 529, "overloaded_error", retryable.Message
 	}
 	var apiErr genai.APIError
 	if errors.As(err, &apiErr) {
@@ -152,10 +159,8 @@ func upstreamStatus(err error) (int, string, string) {
 				message = "Google rejected the Gemini API key. Check that the key is correct and still active, then start a new Claude Code session."
 			}
 			return http.StatusBadRequest, "invalid_request_error", message
-		case apiErr.Code == http.StatusUnauthorized:
-			return http.StatusUnauthorized, "authentication_error", message
-		case apiErr.Code == http.StatusForbidden:
-			return http.StatusForbidden, "permission_error", message
+		case apiErr.Code == http.StatusUnauthorized || apiErr.Code == http.StatusForbidden:
+			return http.StatusBadRequest, "invalid_request_error", "The model's provider refused the credentials NeoSwitch uses for it (" + message + "). Check that API key or account, then start a new Claude Code session, or run /neoswitch:off and start a new session to go back to Claude."
 		case apiErr.Code == http.StatusNotFound:
 			return http.StatusNotFound, "not_found_error", message
 		case apiErr.Code == http.StatusRequestEntityTooLarge:

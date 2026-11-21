@@ -5,5 +5,5 @@ case $input in
 *accounts.google.com*) ;;
 *) exit 0 ;;
 esac
-printf '%s' "$input" | "$(dirname -- "$0")/neoswitch.sh" sign-in-check 2>/dev/null || true
+printf '%s' "$input" | "$(dirname -- "$0")/neoswitch.sh" --cached sign-in-check 2>/dev/null || true
 exit 0

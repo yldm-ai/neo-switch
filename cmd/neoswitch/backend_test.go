@@ -22,13 +22,11 @@ func isolateBackendEnv(t *testing.T, agyInstalled bool) string {
 	}
 	dir := t.TempDir()
 	t.Setenv("NEOSWITCH_STATE_DIR", filepath.Join(dir, "state"))
-	agy := filepath.Join(dir, "agy")
 	if agyInstalled {
-		if err := os.WriteFile(agy, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		installAgy(t)
+	} else {
+		t.Setenv("ANTIGRAVITY_CLI_PATH", filepath.Join(dir, "agy"))
 	}
-	t.Setenv("ANTIGRAVITY_CLI_PATH", agy)
 	return filepath.Join(dir, "state")
 }
 
@@ -298,13 +296,17 @@ func TestStatusAnswersInPlainLines(t *testing.T) {
 	}
 }
 
+// installAgy points NeoSwitch at the fake agy of signin_test.go, signed in to an account whose plan offers the default model, so turning a project on passes its check of agy.
 func installAgy(t *testing.T) {
 	t.Helper()
-	agy := filepath.Join(t.TempDir(), "agy")
-	if err := os.WriteFile(agy, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	t.Setenv("ANTIGRAVITY_CLI_PATH", os.Args[0])
+	t.Setenv(fakeAgyEnv, "1")
+	signedIn := filepath.Join(t.TempDir(), "fake-signed-in")
+	if err := os.WriteFile(signedIn, []byte("before\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ANTIGRAVITY_CLI_PATH", agy)
+	t.Setenv("FAKE_SIGNED_IN", signedIn)
+	t.Setenv("FAKE_MODELS", provider.DefaultModel)
 }
 
 func mustOn(t *testing.T, project string) {

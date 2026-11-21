@@ -62,3 +62,23 @@ func TestEnableThenDisableRestoresSettings(t *testing.T) {
 		t.Fatalf("after Disable: enabled %v, %v", on, err)
 	}
 }
+
+// A saved port another program took is replaced by a free one; the token and backend stay, so nothing else changes.
+func TestMovePortKeepsTokenAndBackend(t *testing.T) {
+	dir := t.TempDir()
+	s, err := SaveBackend(dir, "antigravity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MovePort(dir, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Listen == s.Listen || loaded != moved || loaded.Token != s.Token || loaded.Backend != "antigravity" {
+		t.Fatalf("before %+v, moved %+v, saved %+v", s, moved, loaded)
+	}
+}

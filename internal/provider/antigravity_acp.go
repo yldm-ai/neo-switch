@@ -358,7 +358,7 @@ func (a *AntigravityACP) requestError(ctx context.Context, c *acpConn, action st
 	select {
 	case <-c.conn.Done():
 		a.discard(c)
-		return a.unavailable(fmt.Errorf("%s: agy exited unexpectedly: %w", action, err))
+		return a.retryable(fmt.Errorf("%s: agy exited unexpectedly: %w", action, err))
 	default:
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -378,9 +378,18 @@ func (a *AntigravityACP) requestError(ctx context.Context, c *acpConn, action st
 }
 
 // acpUnavailableMessage is what Claude Code shows when agy cannot serve any request: it did not start, did not finish the handshake, exited, or asks for a sign-in.
-const acpUnavailableMessage = "Antigravity is not responding, possibly because you are signed out. Run /neoswitch:login to sign in again, or run /neoswitch:off and start a new session to go back to Claude."
+const acpUnavailableMessage = "NeoSwitch could not start Google's Antigravity command-line tool (agy). Run /neoswitch:login, which installs or repairs it, or run /neoswitch:off and start a new session to go back to Claude."
+
+// acpRetryMessage is shown only when every retry of a transient agy failure failed.
+const acpRetryMessage = "Google's Antigravity command-line tool (agy) stopped or did not start in time, and NeoSwitch could not get it answering again. Try again in a moment; if it keeps happening, run /neoswitch:status, or run /neoswitch:off and start a new session to go back to Claude."
 
 // unavailable logs the cause, which can hold raw JSON-RPC text, and returns the plain error the proxy reports. While a sign-in by code waits, the message gives its link and the step that finishes it.
+// retryable reports an agy failure the next request is likely to fix: agy crashed, or its handshake timed out on a cold start. Claude Code retries it; answering it as unavailable would stop the session on a hiccup.
+func (a *AntigravityACP) retryable(cause error) error {
+	acpLogger.Warn("Antigravity failed, retrying", "error", cause)
+	return &translate.RetryableError{Message: acpRetryMessage}
+}
+
 func (a *AntigravityACP) unavailable(cause error) error {
 	acpLogger.Warn("Antigravity unavailable", "error", cause)
 	return &translate.UnavailableError{Message: acpUnavailableMessage}
@@ -426,7 +435,7 @@ func (a *AntigravityACP) connection(ctx context.Context) (*acpConn, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("initialize Antigravity ACP: %w", ctxErr)
 		}
-		return nil, a.unavailable(fmt.Errorf("initialize Antigravity ACP: %w", err))
+		return nil, a.retryable(fmt.Errorf("initialize Antigravity ACP: %w", err))
 	}
 	c.imagePrompts = init.AgentCapabilities.PromptCapabilities.Image
 	a.conn = c

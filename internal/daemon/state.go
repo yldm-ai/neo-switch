@@ -57,12 +57,10 @@ func EnsureState(dir string) (State, error) {
 	if s, ok, err := LoadState(dir); err != nil || ok {
 		return s, err
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	addr, err := freeLoopbackPort()
 	if err != nil {
-		return State{}, fmt.Errorf("pick a loopback port: %w", err)
+		return State{}, err
 	}
-	addr := listener.Addr().String()
-	_ = listener.Close()
 	var token [24]byte
 	_, _ = rand.Read(token[:])
 	s := State{Listen: addr, Token: hex.EncodeToString(token[:])}
@@ -70,6 +68,26 @@ func EnsureState(dir string) (State, error) {
 		return State{}, err
 	}
 	return s, nil
+}
+
+// MovePort gives NeoSwitch a new loopback port, keeping its token and backend. It is for a saved port that another program took, as can happen after a reboot: no NeoSwitch daemon can listen there any more, so nothing still pointing at it works either way.
+func MovePort(dir string, s State) (State, error) {
+	addr, err := freeLoopbackPort()
+	if err != nil {
+		return State{}, err
+	}
+	s.Listen = addr
+	return s, writeState(dir, s)
+}
+
+func freeLoopbackPort() (string, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", fmt.Errorf("pick a loopback port: %w", err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+	return addr, nil
 }
 
 // SaveBackend records the user's backend choice ("" for automatic), creating the state when needed.

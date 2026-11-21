@@ -102,8 +102,9 @@ func names(events []sseEvent) string {
 func TestAuthAcceptsBearerAndAPIKey(t *testing.T) {
 	backend := &fakeBackend{response: &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{Content: genai.NewContentFromText("ok", genai.RoleModel)}}}}
 	handler := NewHandler(Config{Token: "secret", Backend: backend})
-	if rec := post(t, handler, "/v1/messages", textRequest, "Authorization", "Bearer wrong"); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong token: %d", rec.Code)
+	// Not 401, which Claude Code would blame on the user's Claude login.
+	if rec := post(t, handler, "/v1/messages", textRequest, "Authorization", "Bearer wrong"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "/neoswitch:on") {
+		t.Fatalf("wrong token: %d %s", rec.Code, rec.Body)
 	}
 	if rec := post(t, handler, "/v1/messages", textRequest); rec.Code != http.StatusOK {
 		t.Fatalf("bearer: %d %s", rec.Code, rec.Body)
@@ -206,7 +207,9 @@ func TestUpstreamStatusMapping(t *testing.T) {
 	}{
 		{genai.APIError{Code: 400, Message: "The input token count (2000000) exceeds the maximum number of tokens allowed (1048576)."}, 400, "invalid_request_error", "prompt is too long"},
 		{genai.APIError{Code: 400, Message: "bad schema"}, 400, "invalid_request_error", "bad schema"},
-		{genai.APIError{Code: 403, Message: "no access"}, 403, "permission_error", "no access"},
+		// Claude Code reads 401 and 403 as a broken Claude login and tells the user to run /login.
+		{genai.APIError{Code: 403, Message: "no access"}, 400, "invalid_request_error", "no access"},
+		{genai.APIError{Code: 401, Message: "bad key"}, 400, "invalid_request_error", "refused the credentials NeoSwitch uses"},
 		{genai.APIError{Code: 404, Message: "model not found"}, 404, "not_found_error", "model not found"},
 		{genai.APIError{Code: 503, Message: "overloaded"}, 529, "overloaded_error", "overloaded"},
 		{genai.APIError{Code: 500, Message: "internal"}, 500, "api_error", "internal"},
@@ -214,7 +217,8 @@ func TestUpstreamStatusMapping(t *testing.T) {
 		{genai.APIError{Code: 400, Message: "bad key", Details: []map[string]any{{"reason": "API_KEY_INVALID"}}}, 400, "invalid_request_error", "Google rejected the Gemini API key"},
 		{context.DeadlineExceeded, 504, "api_error", "did not answer within 10 minutes"},
 		{errors.New("dial tcp: refused"), 502, "api_error", "refused"},
-		{fmt.Errorf("start: %w", &translate.UnavailableError{Message: "Run /neoswitch:login to sign in again."}), 403, "permission_error", "Run /neoswitch:login to sign in again."},
+		{fmt.Errorf("start: %w", &translate.UnavailableError{Message: "Run /neoswitch:login to sign in again."}), 400, "invalid_request_error", "Run /neoswitch:login to sign in again."},
+		{fmt.Errorf("prompt: %w", &translate.RetryableError{Message: "agy restarted"}), 529, "overloaded_error", "agy restarted"},
 	} {
 		status, typ, message := upstreamStatus(tc.err)
 		if status != tc.status || typ != tc.typ || !strings.Contains(message, tc.message) {
@@ -237,7 +241,7 @@ func TestUnavailableUpstreamIsReportedVerbatim(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("%s: %v", rec.Body, err)
 		}
-		if rec.Code != http.StatusForbidden || got.Error.Type != "permission_error" || got.Error.Message != message {
+		if rec.Code != http.StatusBadRequest || got.Error.Type != "invalid_request_error" || got.Error.Message != message {
 			t.Fatalf("%d %s", rec.Code, rec.Body)
 		}
 	}
@@ -269,5 +273,25 @@ func TestMethodsAreEnforced(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/messages", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /v1/messages = %d", rec.Code)
+	}
+}
+
+// No answer of NeoSwitch's own may be a 401 or 403: Claude Code shows both as a broken Claude login.
+func TestNoOwnFailureLooksLikeAClaudeLoginProblem(t *testing.T) {
+	for _, err := range []error{
+		&translate.UnavailableError{Message: "x"},
+		&translate.RetryableError{Message: "x"},
+		&translate.UpstreamError{Reason: "x"},
+		genai.APIError{Code: 401, Message: "x"},
+		genai.APIError{Code: 403, Message: "x"},
+		errors.New("x"),
+	} {
+		if status, _, _ := upstreamStatus(err); status == http.StatusUnauthorized || status == http.StatusForbidden {
+			t.Errorf("%T -> %d", err, status)
+		}
+	}
+	rec := post(t, NewHandler(Config{Token: "secret"}), "/v1/messages", textRequest)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("no backend: %d", rec.Code)
 	}
 }

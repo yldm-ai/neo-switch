@@ -360,8 +360,8 @@ func TestOpenAIErrorStatusMappingDoesNotLeakKey(t *testing.T) {
 		wantType string
 		contains string
 	}{
-		{401, `{"error":{"message":"Incorrect API key provided: ` + openAITestKey + `. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`, 401, "authentication_error", ""},
-		{401, `{"error":{"message":"Incorrect API key provided: sk-test-********************6789.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`, 401, "authentication_error", ""},
+		{401, `{"error":{"message":"Incorrect API key provided: ` + openAITestKey + `. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`, 400, "invalid_request_error", "refused the credentials NeoSwitch uses"},
+		{401, `{"error":{"message":"Incorrect API key provided: sk-test-********************6789.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`, 400, "invalid_request_error", "refused the credentials NeoSwitch uses"},
 		{429, `{"error":{"message":"Rate limit reached","type":"requests","param":null,"code":"rate_limit_exceeded"}}`, 429, "rate_limit_error", "Rate limit reached"},
 		{400, `{"error":{"message":"Your input exceeds the context window of this model.","type":"invalid_request_error","param":"input","code":"context_length_exceeded"}}`, 400, "invalid_request_error", "prompt is too long"},
 		{404, `{"error":{"message":"The model does not exist","type":"invalid_request_error","param":null,"code":"model_not_found"}}`, 404, "not_found_error", ""},

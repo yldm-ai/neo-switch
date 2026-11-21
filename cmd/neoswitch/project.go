@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,7 +45,41 @@ func on(args []string) error {
 	if err != nil {
 		return err
 	}
-	return enableProject(project, currentSession())
+	return enableProject(project, currentSession(), nil)
+}
+
+// routeNotReadyError means the route cannot answer yet, for a reason the user can fix: the project stays on Claude.
+type routeNotReadyError struct{ reason string }
+
+func (e *routeNotReadyError) Error() string {
+	return "NeoSwitch did not switch this project, so it keeps using Claude. " + e.reason
+}
+
+// preflightTimeout bounds the check of agy before a project is switched; a signed-in agy answers in about two seconds.
+var preflightTimeout = 30 * time.Second
+
+// antigravityReady checks that agy is signed in and offers the configured model, starting agy when models is nil. agy refusing to start counts as not ready, since every request would then fail the same way.
+func antigravityReady(models []string) error {
+	backend, err := provider.NewAntigravityACPFromEnv(context.Background())
+	if err != nil {
+		return &routeNotReadyError{reason: sentence(err.Error())}
+	}
+	if models == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), preflightTimeout)
+		defer cancel()
+		signed, offered, err := backend.SignedIn(ctx)
+		switch {
+		case err != nil:
+			return &routeNotReadyError{reason: "Google's Antigravity command-line tool (agy) did not answer (" + err.Error() + "). Run /neoswitch:login, which repairs it."}
+		case !signed:
+			return &routeNotReadyError{reason: "You are not signed in to Google through agy. Run /neoswitch:login."}
+		}
+		models = offered
+	}
+	if len(models) > 0 && !slices.Contains(models, backend.Model()) {
+		return &routeNotReadyError{reason: provider.ModelNotOfferedMessage(backend.Model(), models)}
+	}
+	return nil
 }
 
 // claudeSession is the Claude Code session a command runs in. A sign-in finished in the browser turns the project on from the sign-in helper, which records the session of the /neoswitch:login that started it.
@@ -59,10 +94,17 @@ func currentSession() claudeSession {
 	return claudeSession{pid: pid, inside: inside, gateway: gatewayModeOn()}
 }
 
-func enableProject(project string, session claudeSession) error {
-	// Turning a project on with no way to reach a model would only make every message of its next session fail. The check is local: it starts no agy and makes no network call, so an installed but signed-out agy still passes.
-	if _, _, err := resolveBackend(); err != nil {
+// enableProject turns project on for session. models are the models agy offers the account when the caller just checked them, or nil.
+func enableProject(project string, session claudeSession, models []string) error {
+	kind, _, err := resolveBackend()
+	if err != nil {
 		return err
+	}
+	// A session applies the settings on its next request and keeps them, so switching it to a route that cannot answer would leave it failing until it closes. The route is checked first.
+	if kind == backendAntigravity {
+		if err := antigravityReady(models); err != nil {
+			return err
+		}
 	}
 	dir, err := daemon.Dir()
 	if err != nil {
@@ -76,7 +118,7 @@ func enableProject(project string, session claudeSession) error {
 	var notice string
 	tracked := false
 	if inside && !session.gateway && pid > 1 {
-		if tracked, notice, err = serveSession(dir, state, pid, projectKey(project)); err != nil {
+		if tracked, notice, err = serveSession(dir, &state, pid, projectKey(project)); err != nil {
 			return fmt.Errorf("NeoSwitch was not turned on, so this session keeps using Claude: %w", err)
 		}
 	}
@@ -128,7 +170,8 @@ func projectKey(project string) string {
 }
 
 // serveSession makes the shared daemon serve the Claude Code process pid, starting it with the configured backend when none is running. The notice is non-empty when an already running daemon serves a different setup than the one configured now.
-func serveSession(dir string, state daemon.State, pid int, project string) (tracked bool, notice string, err error) {
+// serveSession attaches pid to the daemon. A saved port that another program took is replaced in *state, so the settings written afterwards point at the new one.
+func serveSession(dir string, state *daemon.State, pid int, project string) (tracked bool, notice string, err error) {
 	kind, _, err := resolveBackend()
 	if err != nil {
 		return false, "", err
@@ -139,16 +182,21 @@ func serveSession(dir string, state daemon.State, pid int, project string) (trac
 		return false, "", err
 	}
 	_ = os.Setenv(backendEnv, kind)
-	tracked, err = daemon.Attach(state, pid, project, func() error { return spawnDaemon(dir) })
-	if err != nil {
-		var busy *daemon.PortInUseError
-		if errors.As(err, &busy) {
-			_, port, _ := net.SplitHostPort(busy.Listen)
-			return false, "", fmt.Errorf("another program on this computer is using port %s, which NeoSwitch needs; close it and try again", port)
+	spawn := func() error { return spawnDaemon(dir) }
+	tracked, err = daemon.Attach(*state, pid, project, spawn)
+	var busy *daemon.PortInUseError
+	if errors.As(err, &busy) {
+		moved, moveErr := daemon.MovePort(dir, *state)
+		if moveErr != nil {
+			return false, "", moveErr
 		}
+		*state = moved
+		tracked, err = daemon.Attach(*state, pid, project, spawn)
+	}
+	if err != nil {
 		return false, "", fmt.Errorf("NeoSwitch could not start (details are in %s)", filepath.Join(dir, "daemon.log"))
 	}
-	if info, running := daemon.Status(state); running && (info.Backend != "" && info.Backend != label || info.Version != version) {
+	if info, running := daemon.Status(*state); running && (info.Backend != "" && info.Backend != label || info.Version != version) {
 		return tracked, attachNotice("", model, label, info, running, false), nil
 	}
 	return tracked, "", nil
@@ -360,8 +408,13 @@ func attach(args []string) error {
 	if err != nil {
 		var busy *daemon.PortInUseError
 		if errors.As(err, &busy) {
+			// This session already applied the old port and cannot answer. The project goes back to Claude for the next session, and NeoSwitch moves to a free port, which /neoswitch:on uses.
 			_, port, _ := net.SplitHostPort(busy.Listen)
-			return hookMessage("NeoSwitch: another program on this computer is using port " + port + ", which NeoSwitch needs, so this session cannot answer. Close that program and start a new Claude Code session, or run /neoswitch:off to go back to Claude.")
+			if project != "" {
+				_ = daemon.Disable(project, state)
+			}
+			_, _ = daemon.MovePort(dir, state)
+			return hookMessage("NeoSwitch: another program on this computer took port " + port + ", which NeoSwitch used, so this session cannot answer. NeoSwitch moved to a new port: run /neoswitch:on to switch this session again, or start a new session, which uses Claude.")
 		}
 		return hookMessage("NeoSwitch could not start, so this session cannot answer. Start a new Claude Code session to try again, or run /neoswitch:off to go back to Claude. Details are in " + filepath.Join(dir, "daemon.log") + ".")
 	}

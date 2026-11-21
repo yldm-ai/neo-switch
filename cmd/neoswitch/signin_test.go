@@ -516,8 +516,9 @@ func TestLoginKeepsProjectOffWhenPlanLacksModel(t *testing.T) {
 	if settingsExist(t, project) || pendingSignInLink(dir) != "" {
 		t.Fatal("after a sign-in by code: the project was turned on without the model")
 	}
-	if problem := modelNotOffered(nil); !strings.Contains(problem, "gemini-3.8-flash, claude-sonnet-4-6") || !strings.Contains(problem, "GEMINI_MODEL") {
-		t.Fatalf("explanation %q", problem)
+	err := on([]string{project})
+	if err == nil || !strings.Contains(err.Error(), "gemini-3.8-flash, claude-sonnet-4-6") || !strings.Contains(err.Error(), "GEMINI_MODEL") || settingsExist(t, project) {
+		t.Fatalf("/neoswitch:on: %v", err)
 	}
 	t.Setenv("FAKE_MODELS", "gemini-3.8-flash,"+provider.DefaultModel)
 	if err := antigravityLogin([]string{"--on", project}); err != nil {
@@ -525,5 +526,18 @@ func TestLoginKeepsProjectOffWhenPlanLacksModel(t *testing.T) {
 	}
 	if !settingsExist(t, project) {
 		t.Fatal("a plan with the model did not turn the project on")
+	}
+}
+
+// /neoswitch:on checks agy before writing any settings: a session switched to a route that cannot answer would fail until it closes.
+func TestOnRefusesSignedOutAgy(t *testing.T) {
+	fakeSignInEnv(t)
+	project := t.TempDir()
+	err := on([]string{project})
+	if err == nil || !strings.Contains(err.Error(), "not signed in") || !strings.Contains(err.Error(), "/neoswitch:login") || !strings.Contains(err.Error(), "keeps using Claude") {
+		t.Fatalf("got %v", err)
+	}
+	if settingsExist(t, project) {
+		t.Fatal("settings were written for a signed-out agy")
 	}
 }
