@@ -23,6 +23,7 @@ Status: phases 1 to 3 implemented, 2026-11-21. It supersedes how routing works t
 | F10 | Claude Code's TLS stack refuses every certificate under a CA that has name constraints on IP addresses (`UNSUPPORTED_CONSTRAINT_TYPE`), whether or not the address fits. NeoSwitch's CA therefore carries none; its key is discarded after signing the server certificate instead. | Two-window test, Claude Code 2.1.330 |
 | F11 | Every open Claude Code window of a project applies a settings change at once, through its file watcher, not only on its next request. | Adversarial review of the transient design (Claude Code source) |
 | F12 | Two real windows in one project: the one that ran `/neoswitch:on` reached the model side; the other, sharing the settings, was answered by Claude through passthrough with the user's own login; after `/neoswitch:off` the first window was answered by Claude in the same session; no connectors warning appeared; the settings were removed at `/neoswitch:off`, and the daemon stopped after both exited. | Two-window test, Claude Code 2.1.330, fake model side |
+| F13 | A Task subagent's requests, including one running in the background, carry its parent's `x-claude-code-session-id`, plus an `x-claude-code-agent-id` header, and `cc_is_subagent=true` in the system prompt's billing line. So a subagent of an opted-in session is routed with it to Gemini. | Recording passthrough probe, `claude -p` with a Task subagent, Claude Code 2.1.330, 2026-11-21 |
 
 ## Architecture
 
@@ -119,7 +120,7 @@ So the settings stay while an opted-in session of the project runs. What is kept
 - **Upgrade.** A state from before TLS moves to TLS on a new port, keeping its token, so a daemon of the earlier version can serve its sessions until they end; `Disable` also removes the earlier plain-HTTP entries.
 
 Open, with reopen conditions:
-- Requests of subagents and background tasks may carry another session id or none, and would then pass through to Claude in the middle of a Gemini turn. Reopen when a probe of a Task subagent shows a different `x-claude-code-session-id`.
+- ~~Requests of subagents may carry another session id~~: a Task subagent sends its parent's id, also in the background (F13). Reopen when a Claude Code release adds a request kind that runs under its own session id; the probe is a recording passthrough at `ANTHROPIC_BASE_URL` comparing `x-claude-code-session-id` across requests.
 - A session that loses the applied env while its settings are still in the file is not detected. Reopen when a probe shows it happening on any Claude Code version.
 
 ## Behaviour the user sees
