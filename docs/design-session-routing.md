@@ -18,6 +18,8 @@ Status: proposed, 2026-11-21. It supersedes how routing works today: `ANTHROPIC_
 | F5 | Every request carries `x-claude-code-session-id`. It equals the hooks' `session_id`, the skills' `${CLAUDE_SESSION_ID}`, and `CLAUDE_CODE_SESSION_ID` in a skill's `!` command. | Interactive probe |
 | F6 | How Claude Code shows an error status: **400** `invalid_request_error` → "API Error: 400 <message>", not retried. **403** → "Please run /login · …". **404** → "the selected model may not exist". **5xx** → retried with backoff for over 40 s without showing the message. | Probe server per status |
 | F7 | A skill's `!` command runs before the model turn, so `/neoswitch:off` takes effect even when the session's route fails. | Observed (fornix) |
+| F8 | A running session keeps project env it applied after the entries are removed, applies a changed value on its next request, and goes straight back to Anthropic when `ANTHROPIC_BASE_URL` is overwritten with `https://api.anthropic.com`. | Interactive TLS probe: write, remove, change, overwrite |
+| F9 | In print mode Claude Code retries a 400 about 10 times within 2 s before it shows the message. A 400 must therefore be cheap to answer again. | Probe server count |
 
 ## Architecture
 
@@ -95,7 +97,29 @@ CLAUDE_CODE_USE_GATEWAY  = 0
    - Any NeoSwitch run also sweeps recorded projects with no opted-in live session and removes their settings.
    - Uninstalling the plugin without `/neoswitch:off` remains a documented gap: no hook fires on uninstall.
 
-### Behaviour the user sees
+#### Transient project settings (added after F8)
+
+The project's settings exist only until the sessions that opted in have used them:
+
+1. `/neoswitch:on` registers its session (`CLAUDE_CODE_SESSION_ID`) with the daemon as opted in for the project, and only then writes the settings. The order matters: a removal can then never run between the write and the registration.
+2. The session applies the settings on its next request, usually the reply to `/neoswitch:on` itself, which reaches the daemon with that session id. The daemon marks the session as applied.
+3. Once every opted-in session of the project has applied the settings, the daemon removes them (under the sessions lock).
+
+Opted-in sessions keep the applied env (F8). Other windows and new sessions in the project start without it, and never touch NeoSwitch, the daemon, or a credential path. A window that made a request inside that short window applied the env too. It is not opted in, so it passes through to Anthropic and keeps answering with Claude.
+
+The release when the last opted-in session ends stays as a backstop, for a session that opted in but never sent a request.
+
+Passthrough is therefore a safety net, not the normal path. It covers:
+
+- a bystander inside the window;
+- leftover settings after a crash;
+- a session that ran `/neoswitch:off`.
+
+`/neoswitch:off` only opts the session out, so its next request passes through to Claude. Overwriting `ANTHROPIC_BASE_URL` would also return the session to Claude directly (F8), but it would revert every other opted-in session in the project on its next request. Settings are per project; only the daemon can tell sessions apart.
+
+The daemon, not the session's env, says whether a session uses Gemini: `/neoswitch:status` and the hooks ask it by session id.
+
+## Behaviour the user sees
 
 | Situation | Today | With this design |
 |---|---|---|
@@ -130,6 +154,9 @@ CLAUDE_CODE_USE_GATEWAY  = 0
 | Settings released when no session is opted in | Inherited from #53, re-keyed |
 | Preflight, port reselection, per-prompt self-heal, hint health | Adversarial review findings #1, #10, #6, #7 |
 | The Anthropic upstream is the one in effect when the project was enabled | Default; needs the gateway-user probe in phase 2 |
+| Transient project settings, removed once every opted-in session applied them | Derived this round (F8) |
+| `/neoswitch:off` opts out (passthrough) rather than overwriting the base URL | Derived this round (F8: an overwrite reverts every session in the project) |
+| Register the opt-in before writing settings | Derived this round (race between write, apply and removal) |
 
 ## Open items
 
