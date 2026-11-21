@@ -25,6 +25,13 @@ type UnavailableError struct {
 
 func (e *UnavailableError) Error() string { return e.Message }
 
+// RetryableError means the upstream failed in a way the next attempt is likely to fix, for example a crashed agy that the next request starts again. The server answers with a status Claude Code retries with backoff; Message is shown only if every retry fails.
+type RetryableError struct {
+	Message string
+}
+
+func (e *RetryableError) Error() string { return e.Message }
+
 // UnsupportedError is a request feature NeoSwitch cannot carry to the model. Message is a complete sentence for the user; the server reports it without the request field path the error is wrapped in.
 type UnsupportedError struct {
 	Message string

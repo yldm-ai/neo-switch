@@ -417,14 +417,15 @@ func shortHandshake(t *testing.T) {
 func TestACPFailuresReachClaudeCodeAsPlainSentences(t *testing.T) {
 	shortHandshake(t)
 	for _, tc := range []struct {
-		mode        string
-		unavailable bool
+		mode string
+		// unavailable: the user must act; retry: Claude Code retries it, since the next request starts agy again; upstream: this request failed.
+		kind string
 	}{
-		{"init-hang", true},
-		{"init-exit", true},
-		{"exit", true},
-		{"auth-required", true},
-		{"rpc-error", false},
+		{"init-hang", "retry"},
+		{"init-exit", "retry"},
+		{"exit", "retry"},
+		{"auth-required", "unavailable"},
+		{"rpc-error", "upstream"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			a := newFakeACP(t, tc.mode)
@@ -437,13 +438,18 @@ func TestACPFailuresReachClaudeCodeAsPlainSentences(t *testing.T) {
 				t.Fatalf("took %s", elapsed)
 			}
 			var unavailable *translate.UnavailableError
+			var retry *translate.RetryableError
 			var upstream *translate.UpstreamError
 			switch {
-			case tc.unavailable && errors.As(err, &unavailable):
+			case tc.kind == "unavailable" && errors.As(err, &unavailable):
 				if !strings.Contains(unavailable.Message, "/neoswitch:login") {
 					t.Fatalf("message %q does not name the fix", unavailable.Message)
 				}
-			case !tc.unavailable && errors.As(err, &upstream):
+			case tc.kind == "retry" && errors.As(err, &retry):
+				if !strings.Contains(retry.Message, "/neoswitch:off") {
+					t.Fatalf("message %q does not name the way back", retry.Message)
+				}
+			case tc.kind == "upstream" && errors.As(err, &upstream):
 			default:
 				t.Fatalf("unexpected error %T %v", err, err)
 			}

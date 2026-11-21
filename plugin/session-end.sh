@@ -4,5 +4,5 @@ case "${ANTHROPIC_BASE_URL:-}" in
 http://127.0.0.1:*) ;;
 *) exit 0 ;;
 esac
-"$(dirname -- "$0")/neoswitch.sh" detach --pid "$1" 2>/dev/null || true
+"$(dirname -- "$0")/neoswitch.sh" --cached detach --pid "$1" 2>/dev/null || true
 exit 0

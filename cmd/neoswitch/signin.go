@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -206,30 +205,14 @@ func useAntigravity(dir, status string, models []string, turnOn bool, project st
 	if !turnOn {
 		return nil
 	}
-	if problem := modelNotOffered(models); problem != "" {
-		fmt.Println("NeoSwitch did not switch this project, so it keeps using Claude. " + problem)
+	err := enableProject(project, session, models)
+	var notReady *routeNotReadyError
+	if errors.As(err, &notReady) {
+		// The sign-in itself succeeded; only the switch waits.
+		fmt.Println("NeoSwitch did not switch this project, so it keeps using Claude. " + notReady.reason)
 		return nil
 	}
-	return enableProject(project, session)
-}
-
-// modelNotOffered explains why the account cannot use the configured model, or returns "" when it can or when that cannot be told: a check that fails does not block turning the project on.
-func modelNotOffered(models []string) string {
-	backend, err := provider.NewAntigravityACPFromEnv(context.Background())
-	if err != nil {
-		return ""
-	}
-	if models == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), signedInCheckTimeout)
-		defer cancel()
-		if _, models, err = backend.SignedIn(ctx); err != nil {
-			return ""
-		}
-	}
-	if len(models) == 0 || slices.Contains(models, backend.Model()) {
-		return ""
-	}
-	return provider.ModelNotOfferedMessage(backend.Model(), models)
+	return err
 }
 
 // loginCommand is the command that signs in where the user runs it, and finishes a sign-in with the code after it.

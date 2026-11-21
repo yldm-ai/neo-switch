@@ -76,7 +76,11 @@ On Vertex AI the system instruction and tools are counted natively. The Gemini D
 |---|---|
 | translation error (unsupported block, unknown tool_use_id) | `400 invalid_request_error`, before any upstream call |
 | Gemini 400 | `400 invalid_request_error`; token-limit errors are prefixed `prompt is too long:` so Claude Code offers compaction |
-| Gemini 401 / 403 / 404 / 413 | same status, `authentication_error` / `permission_error` / `not_found_error` / `request_too_large` |
+| Gemini 401 / 403 | `400 invalid_request_error` naming the credentials to check. Never 401 or 403: Claude Code reads both as a problem with the user's Claude login and tells them to run `/login` |
+| Gemini 404 / 413 | same status, `not_found_error` / `request_too_large` |
+| upstream that cannot answer until the user acts (agy signed out or missing, a plan without the model) | `400 invalid_request_error` with the fix, shown by Claude Code as it is and not retried |
+| agy crashed or its handshake timed out | `529 overloaded_error`, which Claude Code retries; the next request starts agy again |
+| wrong NeoSwitch token, no backend | `400 invalid_request_error` naming `/neoswitch:on` or `/neoswitch:login` |
 | Gemini 429 | `429 rate_limit_error` |
 | Gemini 503 | `529 overloaded_error` |
 | other Gemini 5xx | same status, `api_error` |
