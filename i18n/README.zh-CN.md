@@ -32,7 +32,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 
 它会先显示 Google 的条款警告，再通过 Google 的 [Antigravity 命令行工具（`agy`）](https://antigravity.google/download)在浏览器里打开 Google 登录，最后为这个项目开启 NeoSwitch。如果这台电脑上还没有 `agy`，它会先用 Google 官方安装脚本把 `agy` 装到 `~/.local/bin`（约 230 MB；安装脚本还会把这个目录加进 shell 的 PATH）。如果你习惯用终端，也可以改用 Gemini API key：见 [docs/cli.md](../docs/cli.md#gemini-api-key)（英文）。
 
-命令同时会显示一个链接，用于打开的浏览器你用不了的情况（例如通过 SSH 连接的远程机器）：在任意设备的浏览器中打开链接并登录，然后运行 `/neoswitch:login` 加上页面显示的授权码。已登录时再次运行 `/neoswitch:login` 可以切换到另一个 Google 账号：完成之前当前账号保持不变，运行 `/neoswitch:login cancel` 则保留当前账号。
+命令同时会显示一个链接，用于打开的浏览器你用不了的情况（例如通过 SSH 连接的远程机器）：在任意设备的浏览器中打开链接并登录。Claude Code 2.1.326 及以上版本会立即显示链接，并弹出对话框让你粘贴页面显示的授权码。在更早的 Claude Code 中，以及在 WSL 或通过 SSH 连接的桌面版中，链接改由 Claude 的回复给出：运行 `/neoswitch:login` 加上授权码。已登录时再次运行 `/neoswitch:login` 可以切换到另一个 Google 账号：完成之前当前账号保持不变，运行 `/neoswitch:login cancel` 则保留当前账号。
 
 > [!WARNING]
 > [Google Antigravity 服务条款](https://antigravity.google/terms)（第 6 条）禁止通过其他工具使用 Antigravity，NeoSwitch 就属于这类工具。Google 可能暂停或关闭这样做的人的 Antigravity 账号。`/neoswitch:login` 每次都会重复这条警告。不接受这个风险，就不要登录。
