@@ -60,6 +60,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 | NeoSwitch에 필요한 포트를 다른 프로그램이 쓰고 있다고 나옴 | 그 프로그램을 닫고 Claude Code를 다시 시작하거나 `/neoswitch:off`를 실행하세요. |
 | NeoSwitch가 프로그램을 내려받지 못했다고 나옴 | 인터넷 연결을 확인하고 Claude Code를 다시 시작하세요. |
 | `/neoswitch:login`이 알 수 없는 명령으로 나옴 | 플러그인을 업데이트하고(아래 참고) Claude Code를 다시 시작한 뒤 `/reload-plugins`를 실행하세요. |
+| Google 계정의 Antigravity 요금제가 gemini-4-neon을 제공하지 않는다는 메시지가 나온다 | 요금제에 Gemini 4 Neon이 없어서 NeoSwitch가 그 모델로 답할 수 없고, 프로젝트는 Claude를 계속 씁니다. `/neoswitch:login`을 다시 실행해 요금제에 포함된 계정으로 로그인하거나, `/neoswitch:off`를 실행하고 새 세션을 시작해 Claude로 돌아가세요. |
 
 ## 끄기, 업데이트, 제거
 

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -108,10 +109,10 @@ func antigravityLogin(args []string) error {
 	}
 	_ = os.Remove(signInLinkPath(dir))
 	checkCtx, cancel := context.WithTimeout(context.Background(), signedInCheckTimeout)
-	signed, _ := backend.SignedIn(checkCtx)
+	signed, models, _ := backend.SignedIn(checkCtx)
 	cancel()
 	if signed {
-		return signInAgain(dir, backend, turnOn, project, replaced)
+		return signInAgain(dir, backend, models, turnOn, project, replaced)
 	}
 	withBrowser := !remoteSession()
 	switch {
@@ -135,9 +136,9 @@ func antigravityLogin(args []string) error {
 }
 
 // signInAgain serves a /neoswitch:login run while agy is signed in: the project is turned on with the current sign-in, and a sign-in by code starts beside it, so the user can switch to another Google account. The current sign-in stays until the new one finishes, and cancel keeps it. agy's browser sign-in would only return the current sign-in, so it is not started.
-func signInAgain(dir string, backend *provider.AntigravityACP, turnOn bool, project string, replaced bool) error {
+func signInAgain(dir string, backend *provider.AntigravityACP, models []string, turnOn bool, project string, replaced bool) error {
 	session := currentSession()
-	if err := useAntigravity(dir, "ok: signed in to Google through Antigravity (agy) already", turnOn, project, session); err != nil {
+	if err := useAntigravity(dir, "ok: signed in to Google through Antigravity (agy) already", models, turnOn, project, session); err != nil {
 		return err
 	}
 	fmt.Println()
@@ -180,7 +181,7 @@ func signedIn(dir string, turnOn bool, project string, session claudeSession) er
 	if err := writePrivateFile(signedInPath(dir), time.Now().UTC().Format(time.RFC3339)+"\n"); err != nil {
 		return err
 	}
-	return useAntigravity(dir, "ok: signed in to Google through Antigravity (agy)", turnOn, project, session)
+	return useAntigravity(dir, "ok: signed in to Google through Antigravity (agy)", nil, turnOn, project, session)
 }
 
 func signedInPath(dir string) string { return filepath.Join(dir, "signed-in") }
@@ -194,8 +195,8 @@ func lastSignIn(dir string) time.Time {
 	return info.ModTime()
 }
 
-// useAntigravity saves Antigravity OAuth as the backend and, with turnOn, turns the project on.
-func useAntigravity(dir, status string, turnOn bool, project string, session claudeSession) error {
+// useAntigravity saves Antigravity OAuth as the backend and, with turnOn, turns the project on, unless the account's plan lacks the model NeoSwitch asks for: every request of the project would then fail. models are the ones the account offers, or nil when they are still to be looked up.
+func useAntigravity(dir, status string, models []string, turnOn bool, project string, session claudeSession) error {
 	fmt.Println(status)
 	if _, err := daemon.SaveBackend(dir, backendAntigravity); err != nil {
 		return fmt.Errorf("save the Antigravity OAuth choice: %w", err)
@@ -205,7 +206,30 @@ func useAntigravity(dir, status string, turnOn bool, project string, session cla
 	if !turnOn {
 		return nil
 	}
+	if problem := modelNotOffered(models); problem != "" {
+		fmt.Println("NeoSwitch did not switch this project, so it keeps using Claude. " + problem)
+		return nil
+	}
 	return enableProject(project, session)
+}
+
+// modelNotOffered explains why the account cannot use the configured model, or returns "" when it can or when that cannot be told: a check that fails does not block turning the project on.
+func modelNotOffered(models []string) string {
+	backend, err := provider.NewAntigravityACPFromEnv(context.Background())
+	if err != nil {
+		return ""
+	}
+	if models == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), signedInCheckTimeout)
+		defer cancel()
+		if _, models, err = backend.SignedIn(ctx); err != nil {
+			return ""
+		}
+	}
+	if len(models) == 0 || slices.Contains(models, backend.Model()) {
+		return ""
+	}
+	return provider.ModelNotOfferedMessage(backend.Model(), models)
 }
 
 // loginCommand is the command that signs in where the user runs it, and finishes a sign-in with the code after it.

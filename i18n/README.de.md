@@ -60,6 +60,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 | Der Hinweis sagt, ein anderes Programm belege den Port, den NeoSwitch braucht | Schließen Sie dieses Programm und starten Sie Claude Code erneut, oder führen Sie `/neoswitch:off` aus. |
 | Der Hinweis sagt, NeoSwitch habe sein Programm nicht herunterladen können | Prüfen Sie Ihre Internetverbindung und starten Sie Claude Code erneut. |
 | `/neoswitch:login` ist ein unbekannter Befehl | Aktualisieren Sie das Plugin (siehe unten), starten Sie Claude Code neu und führen Sie `/reload-plugins` aus. |
+| Eine Meldung sagt, der Antigravity-Tarif Ihres Google-Kontos biete gemini-4-neon nicht an | Ihr Tarif enthält Gemini 4 Neon nicht, daher kann NeoSwitch damit nicht antworten und lässt das Projekt bei Claude. Führen Sie `/neoswitch:login` erneut aus, um sich mit einem Konto anzumelden, dessen Tarif es enthält, oder führen Sie `/neoswitch:off` aus und starten Sie eine neue Sitzung, um zu Claude zurückzukehren. |
 
 ## Ausschalten, aktualisieren oder entfernen
 

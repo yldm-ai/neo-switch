@@ -60,6 +60,7 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 | NeoSwitch が必要とするポートを別のプログラムが使っていると出る | そのプログラムを閉じて Claude Code を起動し直すか、`/neoswitch:off` を実行します。 |
 | NeoSwitch がプログラムをダウンロードできなかったと出る | インターネット接続を確認し、Claude Code を起動し直します。 |
 | `/neoswitch:login` が不明なコマンドになる | プラグインを更新し（下記参照）、Claude Code を再起動してから `/reload-plugins` を実行します。 |
+| Google アカウントの Antigravity プランに gemini-4-neon がないと出る | プランに Gemini 4 Neon が含まれていないため、NeoSwitch はそれで回答できず、プロジェクトは Claude のままです。`/neoswitch:login` をもう一度実行して、プランに含まれるアカウントでサインインするか、`/neoswitch:off` を実行して新しいセッションを始め、Claude に戻ってください。 |
 
 ## オフ・更新・削除
 

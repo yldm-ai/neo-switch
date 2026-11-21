@@ -60,6 +60,7 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 | La note dit qu'un autre programme utilise le port dont NeoSwitch a besoin | Fermez ce programme et relancez Claude Code, ou exécutez `/neoswitch:off`. |
 | La note dit que NeoSwitch n'a pas pu télécharger son programme | Vérifiez votre connexion internet et relancez Claude Code. |
 | `/neoswitch:login` est une commande inconnue | Mettez le plugin à jour (voir ci-dessous), redémarrez Claude Code, puis exécutez `/reload-plugins`. |
+| Un message indique que l'offre Antigravity de votre compte Google ne propose pas gemini-4-neon | Votre offre n'inclut pas Gemini 4 Neon : NeoSwitch ne peut pas répondre avec lui et laisse le projet sur Claude. Relancez `/neoswitch:login` pour vous connecter avec un compte dont l'offre l'inclut, ou lancez `/neoswitch:off` et ouvrez une nouvelle session pour revenir à Claude. |
 
 ## Désactiver, mettre à jour ou supprimer
 

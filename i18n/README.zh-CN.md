@@ -60,6 +60,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 | 提示说有别的程序占用了 NeoSwitch 需要的端口 | 关掉那个程序后重新启动 Claude Code，或者运行 `/neoswitch:off`。 |
 | 提示说 NeoSwitch 下载不了它的程序 | 检查网络连接，然后重新启动 Claude Code。 |
 | `/neoswitch:login` 提示是未知命令 | 更新插件（见下文），重启 Claude Code，再运行 `/reload-plugins`。 |
+| 提示说你的 Google 账号的 Antigravity 套餐不提供 gemini-4-neon | 你的套餐不包含 Gemini 4 Neon，NeoSwitch 无法用它回答，项目会保持使用 Claude。再次运行 `/neoswitch:login`，换一个套餐包含它的账号登录；或者运行 `/neoswitch:off` 并开一个新会话回到 Claude。 |
 
 ## 关闭、更新与卸载
 

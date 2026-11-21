@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yldm-ai/neo-switch/internal/provider"
 )
 
 // fakeAgyEnv makes the test binary act as agy: `acp` answers the ACP handshake, offers both sign-ins, and creates sessions only when signed in; `acp ... --login` is the sign-in by code, accepting fakeCode. Being signed in is the file FAKE_SIGNED_IN, written by either sign-in. FAKE_BROWSER sets the browser sign-in: "after" finishes it after FAKE_BROWSER_DELAY, "fail" fails it, and anything else leaves it waiting for a browser nobody uses.
@@ -82,7 +84,16 @@ func runFakeAgy() {
 			if _, err := os.Stat(signedIn); err != nil {
 				reply(msg.ID, nil, map[string]any{"code": -32000, "message": "Authentication required"})
 			} else {
-				reply(msg.ID, map[string]any{"sessionId": "fake"}, nil)
+				result := map[string]any{"sessionId": "fake"}
+				// FAKE_MODELS, comma-separated, are the models the account's plan offers.
+				if models := os.Getenv("FAKE_MODELS"); models != "" {
+					var choices []any
+					for _, model := range strings.Split(models, ",") {
+						choices = append(choices, map[string]string{"value": model, "name": model})
+					}
+					result["configOptions"] = []any{map[string]any{"type": "select", "id": "model", "name": "Model", "currentValue": choices[0].(map[string]string)["value"], "options": choices}}
+				}
+				reply(msg.ID, result, nil)
 			}
 		default:
 			reply(msg.ID, map[string]any{}, nil)
@@ -482,5 +493,37 @@ func TestBrowserSignInAfterSessionClosedKeepsProjectOff(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if settingsExist(t, project) {
 		t.Fatal("a closed session's project was turned on")
+	}
+}
+
+// An account whose Antigravity plan lacks the model would fail every request of the project, so signing in leaves the project on Claude and says why, whether agy was signed in already or the sign-in just finished.
+func TestLoginKeepsProjectOffWhenPlanLacksModel(t *testing.T) {
+	dir := fakeSignInEnv(t)
+	t.Setenv("FAKE_MODELS", "gemini-3.8-flash,claude-sonnet-4-6")
+	project := t.TempDir()
+	if err := os.WriteFile(os.Getenv("FAKE_SIGNED_IN"), []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := antigravityLogin([]string{"--on", project}); err != nil {
+		t.Fatal(err)
+	}
+	if settingsExist(t, project) {
+		t.Fatal("signed in already: the project was turned on without the model")
+	}
+	if err := antigravityLogin([]string{"--on", project, fakeCode}); err != nil {
+		t.Fatal(err)
+	}
+	if settingsExist(t, project) || pendingSignInLink(dir) != "" {
+		t.Fatal("after a sign-in by code: the project was turned on without the model")
+	}
+	if problem := modelNotOffered(nil); !strings.Contains(problem, "gemini-3.8-flash, claude-sonnet-4-6") || !strings.Contains(problem, "GEMINI_MODEL") {
+		t.Fatalf("explanation %q", problem)
+	}
+	t.Setenv("FAKE_MODELS", "gemini-3.8-flash,"+provider.DefaultModel)
+	if err := antigravityLogin([]string{"--on", project}); err != nil {
+		t.Fatal(err)
+	}
+	if !settingsExist(t, project) {
+		t.Fatal("a plan with the model did not turn the project on")
 	}
 }

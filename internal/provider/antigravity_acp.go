@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -170,13 +171,9 @@ func (a *AntigravityACP) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	values := configValues(session.ConfigOptions, acpModel)
-	if len(values) == 0 {
+	models := modelIDs(session.ConfigOptions)
+	if len(models) == 0 {
 		return nil, errors.New("Antigravity ACP advertised no models for a new session")
-	}
-	models := make([]string, len(values))
-	for i, value := range values {
-		models[i] = string(value)
 	}
 	return models, nil
 }
@@ -308,6 +305,10 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 		defer cancel()
 		_, _ = c.conn.CloseSession(closeCtx, acp.CloseSessionRequest{SessionId: sid})
 	}()
+	// agy offers each account the models of its plan. A model outside them fails every request alike, so it is reported as unavailable, which Claude Code shows as it is, rather than as an error worth retrying.
+	if offered := modelIDs(session.ConfigOptions); len(offered) > 0 && !slices.Contains(offered, a.model) {
+		return acp.PromptResponse{}, &translate.UnavailableError{Message: ModelNotOfferedMessage(a.model, offered) + " Run /neoswitch:off and start a new session to go back to Claude."}
+	}
 	if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
 		SessionId: sid, ConfigId: acpModel, Value: acp.SessionConfigValueId(a.model),
 	}}); err != nil {
@@ -467,6 +468,21 @@ func offersConfigValue(options []acp.SessionConfigOption, id acp.SessionConfigId
 		}
 	}
 	return false
+}
+
+// modelIDs returns the models a new session offers, in agy's order.
+func modelIDs(options []acp.SessionConfigOption) []string {
+	values := configValues(options, acpModel)
+	models := make([]string, len(values))
+	for i, value := range values {
+		models[i] = string(value)
+	}
+	return models
+}
+
+// ModelNotOfferedMessage says that the account's Antigravity plan lacks model, naming the models it has and how to pick one.
+func ModelNotOfferedMessage(model string, offered []string) string {
+	return fmt.Sprintf("Your Google account's Antigravity plan does not offer %s, so Antigravity cannot answer with it. It offers %s. To use one of them, set GEMINI_MODEL to it before starting Claude Code.", model, strings.Join(offered, ", "))
 }
 
 // configValues returns the values a session's select option id offers, grouped or not, in the order the agent lists them.

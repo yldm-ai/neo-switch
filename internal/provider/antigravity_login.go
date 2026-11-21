@@ -47,14 +47,17 @@ func (a *AntigravityACP) TerminalSignInCommand(ctx context.Context) (*exec.Cmd, 
 	return nil, errNoTerminalSignIn
 }
 
-// SignedIn reports whether agy holds a sign-in it can use. A new session needs one, and agy refuses it with ACP's auth-required error otherwise; unlike Login, which returns at once for a signed-in agy but opens a browser for a signed-out one, the check has no effect beyond starting agy.
-func (a *AntigravityACP) SignedIn(ctx context.Context) (bool, error) {
-	_, err := a.probeSession(ctx)
+// SignedIn reports whether agy holds a sign-in it can use, and the models it then offers the account. A new session needs a sign-in, and agy refuses it with ACP's auth-required error otherwise; unlike Login, which returns at once for a signed-in agy but opens a browser for a signed-out one, the check has no effect beyond starting agy.
+func (a *AntigravityACP) SignedIn(ctx context.Context) (signed bool, models []string, err error) {
+	session, err := a.probeSession(ctx)
 	var rpcErr *acp.RequestError
 	if errors.As(err, &rpcErr) && rpcErr.Code == acpAuthRequired {
-		return false, nil
+		return false, nil, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, nil, err
+	}
+	return true, modelIDs(session.ConfigOptions), nil
 }
 
 // TerminalSignIn is a running sign-in by code that has shown its link and waits for the code. The code only works in the agy process that made the link, which holds the PKCE verifier, so the same TerminalSignIn must receive it.

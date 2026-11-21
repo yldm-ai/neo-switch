@@ -992,12 +992,15 @@ func TestSignInRetiresOlderAgy(t *testing.T) {
 
 func TestSignedIn(t *testing.T) {
 	for mode, want := range map[string]bool{"ok": true, "signed-out": false} {
-		signed, err := newFakeACP(t, mode).SignedIn(context.Background())
+		signed, models, err := newFakeACP(t, mode).SignedIn(context.Background())
 		if err != nil || signed != want {
 			t.Errorf("%s: signed in %v, %v", mode, signed, err)
 		}
+		if want && !slices.Equal(models, fakeModels) {
+			t.Errorf("%s: models %v, want %v", mode, models, fakeModels)
+		}
 	}
-	if signed, err := newFakeACP(t, "init-exit").SignedIn(context.Background()); signed || err == nil {
+	if signed, _, err := newFakeACP(t, "init-exit").SignedIn(context.Background()); signed || err == nil {
 		t.Fatalf("a broken agy: signed in %v, %v", signed, err)
 	}
 }
@@ -1008,5 +1011,21 @@ func TestLoginStopsWithItsContext(t *testing.T) {
 	defer cancel()
 	if err := newFakeACP(t, "browser-wait").Login(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// An account whose plan lacks the model gets every request refused alike, so the answer says so at once, naming the models it has, instead of an error Claude Code retries.
+func TestModelNotOfferedIsUnavailable(t *testing.T) {
+	a := newFakeACP(t, "ok")
+	a.model = "gemini-not-in-plan"
+	_, err := a.Generate(context.Background(), textRequest("hi"))
+	var unavailable *translate.UnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("got %T %v", err, err)
+	}
+	for _, want := range append([]string{"does not offer gemini-not-in-plan", "GEMINI_MODEL", "/neoswitch:off"}, fakeModels...) {
+		if !strings.Contains(unavailable.Message, want) {
+			t.Fatalf("message %q lacks %q", unavailable.Message, want)
+		}
 	}
 }

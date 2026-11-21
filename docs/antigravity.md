@@ -33,7 +33,7 @@ While a sign-in waits for its code, a session already routed to a signed-out `ag
 
 The probe launches the official CLI in headless JSON mode with a fixed, non-sensitive prompt. It captures the result in memory, checks for an exact success response, and prints only whether the session is usable. It never prints `stdout`, `stderr`, an account email, a token, or usage details.
 
-The ACP route uses `agy` as the model-side agent process. NeoSwitch sends the translated Claude request through an ACP session, selects `gemini-4-neon`, and translates the returned text or Claude tool call back to the local Anthropic-compatible proxy. OAuth credentials remain owned by `agy`.
+The ACP route uses `agy` as the model-side agent process. NeoSwitch sends the translated Claude request through an ACP session, selects `gemini-4-neon` (or `GEMINI_MODEL`), and translates the returned text or Claude tool call back to the local Anthropic-compatible proxy. OAuth credentials remain owned by `agy`. `agy` offers each account the models of its plan, listed in every new session. When the plan lacks the model, NeoSwitch answers with a message that says so and names the models the plan has, which Claude Code shows as it is instead of retrying; `/neoswitch:login` checks the same list and then leaves the project on Claude.
 
 `agy` is a full coding agent with its own file, shell and web tools. NeoSwitch starts it without `--dangerously-skip-permissions` and rejects every tool permission request it sends, so those tools never run; tools run only in Claude Code, under its permission rules.
 
