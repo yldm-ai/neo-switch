@@ -339,6 +339,8 @@ func TestAttachNotice(t *testing.T) {
 		{"daemon without version", "", agy, daemon.Info{Backend: agy}, true, "Close all Claude Code windows"},
 		{"gateway notice only", "NeoSwitch: gateway.", agy, daemon.Info{Backend: agy, Version: version}, true, "NeoSwitch: gateway."},
 		{"tracked project", "", agy, daemon.Info{Backend: agy, Version: version}, true, "/neoswitch:off continues this session on Claude."},
+		{"same model", "", agy, daemon.Info{Backend: agy, Version: version, Model: provider.DefaultModel}, true, "this session uses Gemini 4 Neon through"},
+		{"earlier model", "", agy, daemon.Info{Backend: agy, Version: version, Model: "gemini-3.8-flash"}, true, "other Claude Code windows started NeoSwitch with gemini-3.8-flash, so this session uses it too. To use Gemini 4 Neon"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := attachNotice(tc.notice, provider.DefaultModel, tc.label, tc.info, tc.running, tc.name == "tracked project")
@@ -401,5 +403,36 @@ func TestServeRefusesOpenListenWithoutToken(t *testing.T) {
 	t.Setenv("NEOSWITCH_AUTH_TOKEN", "")
 	if err := serve(); err == nil || !strings.Contains(err.Error(), "NEOSWITCH_AUTH_TOKEN") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// One daemon answers every switched session with the model it started with, so a session that asks for another model is checked, and told, against the model it will get rather than its own GEMINI_MODEL.
+func TestOnChecksTheRunningDaemonsModel(t *testing.T) {
+	dir := isolateBackendEnv(t, true)
+	t.Setenv("GEMINI_MODEL", "")
+	t.Setenv("FAKE_MODELS", provider.DefaultModel+",gemini-3.8-flash")
+	inSession(t)
+	first := t.TempDir()
+	if err := on([]string{first}); err != nil {
+		t.Fatal(err)
+	}
+	state, ok, err := daemon.LoadState(dir)
+	if err != nil || !ok {
+		t.Fatalf("state: %v %v", ok, err)
+	}
+	if info, running := daemon.Status(state); !running || info.Model != provider.DefaultModel {
+		t.Fatalf("daemon status = %+v, %v; want model %s", info, running, provider.DefaultModel)
+	}
+
+	inSession(t)
+	t.Setenv("GEMINI_MODEL", "gemini-3.8-flash")
+	t.Setenv("FAKE_MODELS", "gemini-3.8-flash")
+	second := t.TempDir()
+	err = on([]string{second})
+	if err == nil || !strings.Contains(err.Error(), "Other Claude Code windows started NeoSwitch with "+provider.DefaultModel) || !strings.Contains(err.Error(), "Close all Claude Code windows") {
+		t.Fatalf("on with another model than the running daemon's: %v", err)
+	}
+	if settingsExist(t, second) {
+		t.Fatal("a session was switched to a model the account's plan does not offer")
 	}
 }
