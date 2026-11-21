@@ -161,6 +161,7 @@ func TestOpenAIBackendRequiresModel(t *testing.T) {
 
 func TestOnRefusesWithoutBackend(t *testing.T) {
 	state := isolateBackendEnv(t, false)
+	inSession(t)
 	project := t.TempDir()
 	if err := on([]string{project}); !errors.Is(err, errNoBackend) {
 		t.Fatalf("expected errNoBackend, got %v", err)
@@ -180,6 +181,7 @@ func TestOnExcludesSettingsFromGit(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	isolateBackendEnv(t, true)
+	inSession(t)
 	// A global excludes file on the machine running the tests must not decide the outcome.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -223,26 +225,28 @@ func TestStatusAnswersInPlainLines(t *testing.T) {
 		notWant []string
 	}{
 		{
-			name: "off without a backend",
-			want: []string{"This project uses Claude.", "/neoswitch:login"},
+			name: "on Claude, no backend",
+			want: []string{"This session uses Claude.", "/neoswitch:login"},
 		},
 		{
-			name:  "off with agy",
+			name:  "on Claude, agy installed",
 			setup: func(t *testing.T, project string) { installAgy(t) },
-			want:  []string{"This project uses Claude.", "Run /neoswitch:on to switch it to Gemini 4 Neon."},
+			want:  []string{"This session uses Claude.", "Run /neoswitch:on to answer with Gemini 4 Neon from this session's next message."},
 		},
 		{
-			name: "on, this session not yet",
+			name: "switched to Gemini",
 			setup: func(t *testing.T, project string) {
 				installAgy(t)
+				inSession(t)
 				mustOn(t, project)
 			},
-			want: []string{"this session still uses Claude", "Run /neoswitch:on to use Gemini 4 Neon from this session's next message."},
+			want: []string{"This session uses Gemini 4 Neon", "NeoSwitch is running", "/neoswitch:off to continue on Claude in this session"},
 		},
 		{
-			name: "on, agy removed afterwards",
+			name: "switched, agy removed afterwards",
 			setup: func(t *testing.T, project string) {
 				installAgy(t)
+				inSession(t)
 				mustOn(t, project)
 				t.Setenv("ANTIGRAVITY_CLI_PATH", filepath.Join(t.TempDir(), "agy"))
 			},
@@ -250,14 +254,16 @@ func TestStatusAnswersInPlainLines(t *testing.T) {
 			notWant: []string{"Gemini 4 Neon"},
 		},
 		{
-			name: "this session routed, service not running",
+			name: "passing through, service not running",
 			setup: func(t *testing.T, project string) {
 				installAgy(t)
-				mustOn(t, project)
-				state, _, _ := daemon.LoadState(os.Getenv("NEOSWITCH_STATE_DIR"))
+				state, err := daemon.EnsureState(os.Getenv("NEOSWITCH_STATE_DIR"))
+				if err != nil {
+					t.Fatal(err)
+				}
 				t.Setenv("ANTHROPIC_BASE_URL", state.BaseURL())
 			},
-			want: []string{"cannot answer", "Run /neoswitch:on to restart it"},
+			want: []string{"not running, so it cannot answer", "Start a new Claude Code session"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -332,12 +338,12 @@ func TestAttachNotice(t *testing.T) {
 		{"earlier version", "", agy, daemon.Info{Backend: agy, Version: "v0.0.1"}, true, "still use the earlier NeoSwitch version"},
 		{"daemon without version", "", agy, daemon.Info{Backend: agy}, true, "Close all Claude Code windows"},
 		{"gateway notice only", "NeoSwitch: gateway.", agy, daemon.Info{Backend: agy, Version: version}, true, "NeoSwitch: gateway."},
-		{"tracked project", "", agy, daemon.Info{Backend: agy, Version: version}, true, "When the last session here using NeoSwitch closes, this project goes back to Claude."},
+		{"tracked project", "", agy, daemon.Info{Backend: agy, Version: version}, true, "/neoswitch:off continues this session on Claude."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := attachNotice(tc.notice, provider.DefaultModel, tc.label, tc.info, tc.running, tc.name == "tracked project")
 			// Only a daemon that tracks the project turns it off; promising it otherwise would be false.
-			if tc.name != "tracked project" && strings.Contains(got, "goes back to Claude") {
+			if tc.name != "tracked project" && strings.Contains(got, "continues this session on Claude") {
 				t.Fatalf("an untracked session was promised the way back: %q", got)
 			}
 			if !strings.Contains(got, tc.want) {

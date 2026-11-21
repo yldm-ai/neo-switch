@@ -37,7 +37,7 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 > [!WARNING]
 > Les [Conditions d'utilisation de Google Antigravity](https://antigravity.google/terms) (section 6) interdisent d'utiliser Antigravity par l'intermédiaire d'autres outils, et NeoSwitch en est un. Google peut suspendre ou fermer les comptes Antigravity des personnes qui le font. `/neoswitch:login` répète cet avertissement à chaque fois. Ne vous connectez pas si vous n'acceptez pas ce risque.
 
-**3. Envoyez votre prochain message.** La fenêtre où vous avez lancé la commande utilise Gemini 4 Neon dès son prochain message, tout comme les nouvelles sessions de ce projet. Si la réponse de la commande vous demande plutôt de redémarrer, parce que Claude Code a été lancé via une passerelle ou que d'autres fenêtres de Claude Code utilisent encore une configuration précédente de NeoSwitch, fermez les fenêtres indiquées, puis relancez `claude` dans le même projet. Quand la dernière session qui utilise NeoSwitch ici se ferme, le projet revient à Claude et votre session suivante démarre sur Claude ; lancez `/neoswitch:on` pour réutiliser Gemini 4 Neon.
+**3. Envoyez votre message suivant.** La fenêtre où vous avez lancé la commande utilise Gemini 4 Neon dès son message suivant. Les autres fenêtres et les nouvelles sessions continuent avec Claude, avec votre propre connexion Claude et vos connecteurs : lancez `/neoswitch:on` dans chaque session qui doit répondre avec Gemini 4 Neon. Si la réponse de la commande vous demande de redémarrer, parce que Claude Code a été lancé via une passerelle, relancez `claude` sans elle dans le même projet.
 
 ## Ce que vous verrez
 
@@ -54,9 +54,9 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 |---|---|
 | La note de session dit que NeoSwitch n'est pas encore configuré | Exécutez `/neoswitch:login`. Votre prochain message utilise Gemini 4 Neon. |
 | Un message dit que `agy` n'est pas installé | `/neoswitch:login` n'a pas pu l'installer lui-même. Exécutez `curl -fsSL https://antigravity.google/cli/install.sh \| bash` dans un terminal ou installez-le depuis la [page de téléchargement de Google](https://antigravity.google/download), puis exécutez de nouveau `/neoswitch:login`. |
-| Chaque message échoue avec une erreur de connexion, ou la note de session dit que cette session ne peut pas répondre | Dans ce même projet, exécutez `/neoswitch:off`. Il rebascule le projet même si sa propre réponse affiche aussi une erreur de connexion. Tapez ensuite `/exit` et relancez `claude` : vous êtes revenu à Claude, et `/neoswitch:status` vous dit quoi corriger. |
+| Chaque message échoue avec une erreur de connexion, ou la note de session indique que cette session ne peut pas répondre | Lancez `/neoswitch:off` : cette session continue avec Claude dès son message suivant, même si la réponse à la commande elle-même échoue. Si les messages échouent encore, tapez `/exit` et relancez `claude` : une nouvelle session utilise Claude, et `/neoswitch:status` vous indique quoi corriger. |
 | La note dit que d'autres fenêtres de Claude Code partagent encore la configuration précédente | Fermez toutes les fenêtres de Claude Code, rouvrez Claude Code, puis lancez `/neoswitch:on`. |
-| Un avertissement indique que les connecteurs claude.ai sont désactivés parce qu'une autre source d'authentification est définie | C'est attendu tant que cette session utilise NeoSwitch : sa clé d'accès locale passe avant votre connexion claude.ai. Les connecteurs reviennent dans votre session suivante une fois le projet revenu à Claude, à la fermeture de la dernière session qui utilise NeoSwitch ou après `/neoswitch:off`. |
+| Un avertissement indique que les connecteurs claude.ai sont désactivés parce qu'une autre source d'authentification est définie | NeoSwitch ne le provoque plus ; une version antérieure le faisait. Mettez le plugin à jour (voir plus bas). S'il persiste, un autre outil définit `ANTHROPIC_AUTH_TOKEN` ou `ANTHROPIC_API_KEY` pour Claude Code. |
 | La note dit qu'un autre programme utilise le port dont NeoSwitch a besoin | Fermez ce programme et relancez Claude Code, ou exécutez `/neoswitch:off`. |
 | La note dit que NeoSwitch n'a pas pu télécharger son programme | Vérifiez votre connexion internet et relancez Claude Code. |
 | `/neoswitch:login` est une commande inconnue | Mettez le plugin à jour (voir ci-dessous), redémarrez Claude Code, puis exécutez `/reload-plugins`. |
@@ -64,7 +64,7 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 
 ## Désactiver, mettre à jour ou supprimer
 
-- `/neoswitch:off` rebascule ce projet sur Claude pour les nouvelles sessions ; une session qui utilise déjà Gemini 4 Neon le garde jusqu'à ce que vous tapiez `/exit`. `/neoswitch:on` rebascule le projet sur Gemini 4 Neon sans rien reconfigurer, dès votre prochain message. Fermer la dernière session qui utilise NeoSwitch dans un projet fait de même.
+- `/neoswitch:off` ramène cette session à Claude dès son message suivant, avec votre propre connexion Claude. `/neoswitch:on` la rebascule sur Gemini 4 Neon sans rien reconfigurer. Fermer une session met fin à sa bascule : chaque nouvelle session démarre sur Claude.
 
 Pour mettre à jour à la main, exécutez ceci dans un terminal, puis fermez toutes les fenêtres Claude Code et rouvrez-les :
 
@@ -77,7 +77,7 @@ Si vous avez ajouté le marketplace sous son ancien nom `yldm-ai/NeoSwitch` / `y
 
 Pour supprimer NeoSwitch :
 
-1. Exécutez d'abord `/neoswitch:off` dans chaque projet que vous avez basculé. Un projet laissé activé continue de pointer vers NeoSwitch et ne répond plus une fois NeoSwitch supprimé. Si vous avez déjà supprimé le plugin, ouvrez `.claude/settings.local.json` dans chacun de ces projets et supprimez `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` et `CLAUDE_CODE_USE_GATEWAY` de son objet `env`.
+1. Exécutez d'abord `/neoswitch:off` dans chaque projet que vous avez basculé. Un projet laissé activé continue de pointer vers NeoSwitch et ne répond plus une fois NeoSwitch supprimé. Si vous avez déjà supprimé le plugin, ouvrez `.claude/settings.local.json` dans chacun de ces projets et supprimez `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`, `CLAUDE_CODE_USE_GATEWAY` et, des versions antérieures, `ANTHROPIC_AUTH_TOKEN` de son objet `env`.
 2. Fermez les fenêtres de Claude Code qui utilisent NeoSwitch, puis exécutez ceci dans un terminal :
 
 ```bash
@@ -96,9 +96,9 @@ La connexion Google est conservée par `agy`, pas par NeoSwitch, et reste en pla
 
 ## Ce que NeoSwitch modifie
 
-Dans chaque projet que vous activez, NeoSwitch ajoute trois entrées à l'objet `env` de `.claude/settings.local.json`, et `/neoswitch:off`, ou la fermeture de la dernière session qui y utilise NeoSwitch, les retire :
+Tant qu'une session d'un projet utilise Gemini 4 Neon, NeoSwitch ajoute quatre entrées à l'objet `env` du `.claude/settings.local.json` de ce projet, et les retire dès qu'aucune session n'y utilise plus NeoSwitch :
 
-- `ANTHROPIC_BASE_URL` et `ANTHROPIC_AUTH_TOKEN` envoient les nouvelles sessions Claude Code du projet vers NeoSwitch sur cet ordinateur. Le jeton n'ouvre que NeoSwitch sur cet ordinateur ; ce n'est pas un identifiant Google ou Anthropic.
+- `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` et `NODE_EXTRA_CA_CERTS` envoient les requêtes Claude Code du projet à NeoSwitch sur cet ordinateur, par une connexion chiffrée à laquelle seul NeoSwitch peut répondre. NeoSwitch répond avec Gemini 4 Neon aux sessions que vous avez basculées et transmet toute autre requête à Claude sans la modifier, avec votre propre connexion Claude, qu'il ne conserve ni ne journalise. L'en-tête contient une clé qui n'ouvre que NeoSwitch sur cet ordinateur.
 - `CLAUDE_CODE_USE_GATEWAY=0` fait parler ces sessions directement à NeoSwitch. Certains outils qui lancent Claude Code via une autre passerelle activent le mode passerelle, et Claude Code ignorerait alors NeoSwitch.
 
 Dans un projet Git, NeoSwitch ajoute aussi `.claude/settings.local.json` à la liste d'exclusion propre au clone (`.git/info/exclude`), pour que le jeton reste hors des commits ; votre `.gitignore` n'est pas modifié.

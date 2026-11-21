@@ -7,14 +7,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
 	envBaseURL   = "ANTHROPIC_BASE_URL"
 	envAuthToken = "ANTHROPIC_AUTH_TOKEN"
+	// envHeaders carries NeoSwitch's token. ANTHROPIC_AUTH_TOKEN would replace the user's Claude login in the session, which turns off claude.ai connectors and makes every request NeoSwitch's to answer; a header of its own leaves the login as it is.
+	envHeaders = "ANTHROPIC_CUSTOM_HEADERS"
+	// envExtraCAs makes the session trust NeoSwitch's local CA, so it can reach the daemon over TLS.
+	envExtraCAs = "NODE_EXTRA_CA_CERTS"
 	// EnvUseGateway is Claude Code's gateway mode switch, set by gateway launchers such as `everyapi use claude`. In gateway mode a session takes ANTHROPIC_BASE_URL from its process environment over project settings, so the proxy entries alone would be ignored silently while the SessionStart hook, which does see the project settings, still attaches. Enable therefore turns gateway mode off for the project.
 	EnvUseGateway = "CLAUDE_CODE_USE_GATEWAY"
 	gatewayOff    = "0"
+	// TokenHeader is the header that carries NeoSwitch's token.
+	TokenHeader = "X-NeoSwitch-Token"
 )
 
 // settingsPath is the per-user, per-project Claude Code settings file. It is the narrowest scope that can set ANTHROPIC_BASE_URL: other projects and other people's checkouts keep talking to Anthropic.
@@ -22,28 +29,63 @@ func settingsPath(project string) string {
 	return filepath.Join(project, ".claude", "settings.local.json")
 }
 
-// Enable points Claude Code sessions in project at the shared proxy by adding its env entries to settings.local.json. Every other key in the file is preserved.
-func Enable(project string, s State) error {
+// Route is what a switched session needs beyond the daemon's address: the CA file it trusts, and the custom headers of the user's environment that NeoSwitch's must not replace.
+type Route struct {
+	Bundle      string
+	UserHeaders string
+}
+
+// Headers is the ANTHROPIC_CUSTOM_HEADERS value for a switched session: the user's own headers, then NeoSwitch's token.
+func (r Route) Headers(s State) string {
+	own := TokenHeader + ": " + s.Token
+	if strings.TrimSpace(r.UserHeaders) == "" {
+		return own
+	}
+	return strings.TrimRight(r.UserHeaders, "\n") + "\n" + own
+}
+
+// Enable points Claude Code sessions in project at the shared proxy by adding its env entries to settings.local.json. Every other key in the file is preserved, and entries an earlier NeoSwitch wrote are replaced.
+func Enable(project string, s State, r Route) error {
 	return editSettings(project, true, func(env map[string]any) {
+		removeLegacy(env, s)
 		env[envBaseURL] = s.BaseURL()
-		env[envAuthToken] = s.Token
+		env[envHeaders] = r.Headers(s)
+		env[envExtraCAs] = r.Bundle
 		env[EnvUseGateway] = gatewayOff
 	})
 }
 
-// Disable removes the env entries Enable wrote. Entries the user changed to point elsewhere are left alone.
+// Disable removes the env entries Enable wrote, and those of NeoSwitch versions from before TLS. Entries the user changed to point elsewhere are left alone.
 func Disable(project string, s State) error {
 	return editSettings(project, false, func(env map[string]any) {
-		if env[envBaseURL] == s.BaseURL() {
-			delete(env, envBaseURL)
-			if env[envAuthToken] == s.Token {
-				delete(env, envAuthToken)
-			}
-			if env[EnvUseGateway] == gatewayOff {
-				delete(env, EnvUseGateway)
-			}
+		removeLegacy(env, s)
+		if env[envBaseURL] != s.BaseURL() {
+			return
+		}
+		delete(env, envBaseURL)
+		if headers, _ := env[envHeaders].(string); strings.Contains(headers, TokenHeader+": "+s.Token) {
+			delete(env, envHeaders)
+		}
+		if cas, _ := env[envExtraCAs].(string); s.dir != "" && cas == BundlePath(s.dir) {
+			delete(env, envExtraCAs)
+		}
+		if env[EnvUseGateway] == gatewayOff {
+			delete(env, EnvUseGateway)
 		}
 	})
+}
+
+// removeLegacy removes the entries of a NeoSwitch from before TLS: a plain-HTTP loopback address with this state's token.
+func removeLegacy(env map[string]any, s State) {
+	url, _ := env[envBaseURL].(string)
+	if !strings.HasPrefix(url, "http://127.0.0.1:") || env[envAuthToken] != s.Token {
+		return
+	}
+	delete(env, envBaseURL)
+	delete(env, envAuthToken)
+	if env[EnvUseGateway] == gatewayOff {
+		delete(env, EnvUseGateway)
+	}
 }
 
 func Enabled(project string, s State) (bool, error) {

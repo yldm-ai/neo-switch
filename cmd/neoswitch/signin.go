@@ -357,7 +357,7 @@ func helperArgs(withBrowser, turnOn bool, project string, session claudeSession)
 		args = append(args, "--on", project)
 	}
 	if session.inside {
-		args = append(args, "--session", strconv.Itoa(session.pid))
+		args = append(args, "--session", strconv.Itoa(session.pid), "--session-id", session.id)
 	}
 	if session.gateway {
 		args = append(args, "--gateway")
@@ -612,11 +612,12 @@ func runSignInHelper(args []string) error {
 	withBrowser := flags.Bool("browser", false, "also run the browser sign-in")
 	project := flags.String("on", "", "turn this project on once signed in in the browser")
 	pid := flags.Int("session", 0, "the Claude Code session to switch")
+	sessionID := flags.String("session-id", "", "its session id")
 	gateway := flags.Bool("gateway", false, "the session runs through a gateway")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	session := claudeSession{pid: *pid, gateway: *gateway}
+	session := claudeSession{pid: *pid, gateway: *gateway, id: *sessionID}
 	flags.Visit(func(f *flag.Flag) { session.inside = session.inside || f.Name == "session" })
 
 	dir, err := daemon.Dir()
