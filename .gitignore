@@ -9,3 +9,6 @@ coverage.out
 /_site/
 # The global build/ ignore pattern would otherwise hide the site generator.
 !/site/build/
+# Claude Code writes the plugin API's types and a tsconfig.json beside the plugin whenever it loads it from this folder (claude --plugin-dir .).
+/.claude-plugin/types/
+/tsconfig.json

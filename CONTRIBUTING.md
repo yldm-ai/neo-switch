@@ -28,6 +28,7 @@ go vet ./...
 ```
 
 - Add or update tests for behavior changes.
+- A change to the plugin's mod (`plugin/mod/`) passes `claude plugin validate .`. To type-check it, run `claude --plugin-dir .` once, which writes the plugin API's types and a `tsconfig.json` beside the plugin (both ignored by git), then `npx -p typescript tsc --noEmit -p .`. Try the commands it answers in real Claude Code: unit tests cannot show what the dialog does.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages and pull request titles, for example `fix: ...`, `feat: ...`, `docs: ...`, `test: ...`, `chore: ...`.
 - One issue per pull request. Write `Fixes #N` in the description; unrelated changes go in separate pull requests.
 - Keep [README.md](README.md) and the nine translations in [i18n/](i18n/) in sync. A README change goes into every translation in the same pull request, with the same structure: the same headings, code blocks, tables and line count, and links that resolve from `i18n/`.

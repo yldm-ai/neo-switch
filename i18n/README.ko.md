@@ -32,7 +32,7 @@ NeoSwitch를 쓰면 Claude Code는 그대로 두고, Claude 대신 Google의 Gem
 
 Google 약관 경고를 보여 준 뒤 Google의 [Antigravity 명령줄 도구(`agy`)](https://antigravity.google/download)를 통해 브라우저에서 Google 로그인을 열고, 마지막으로 이 프로젝트를 전환합니다. 이 컴퓨터에 아직 `agy`가 없으면 먼저 Google 공식 설치 스크립트로 `~/.local/bin`에 설치합니다(약 230MB. 설치 스크립트는 이 폴더를 셸의 PATH에도 추가합니다). 터미널에 익숙하다면 Gemini API 키도 쓸 수 있습니다. [docs/cli.md](../docs/cli.md#gemini-api-key)(영어)를 보세요.
 
-SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 위해 명령은 링크도 함께 보여 줍니다. 아무 기기의 브라우저에서 링크를 열어 로그인한 뒤, 페이지에 표시된 코드를 붙여 `/neoswitch:login`을 실행하세요. 로그인된 상태에서 `/neoswitch:login`을 다시 실행하면 다른 Google 계정으로 바꿀 수 있습니다. 끝날 때까지 현재 계정이 유지되며, `/neoswitch:login cancel`을 실행하면 그대로 유지됩니다.
+SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 위해 명령은 링크도 함께 보여 줍니다. 아무 기기의 브라우저에서 링크를 열어 로그인하세요. Claude Code 2.1.326 이상에서는 링크가 바로 표시되고, 페이지에 나온 코드를 붙여 넣을 대화 상자가 열립니다. 그보다 오래된 Claude Code나 WSL, SSH로 연결한 데스크톱 앱에서는 Claude의 답변이 링크를 보여 주므로, 코드를 붙여 `/neoswitch:login`을 실행하세요. 로그인된 상태에서 `/neoswitch:login`을 다시 실행하면 다른 Google 계정으로 바꿀 수 있습니다. 끝날 때까지 현재 계정이 유지되며, `/neoswitch:login cancel`을 실행하면 그대로 유지됩니다.
 
 > [!WARNING]
 > [Google Antigravity 서비스 약관](https://antigravity.google/terms)(제6조)은 다른 도구를 통해 Antigravity를 쓰는 것을 금지하며, NeoSwitch는 그런 도구에 해당합니다. Google은 그렇게 쓰는 사람의 Antigravity 계정을 정지하거나 해지할 수 있습니다. `/neoswitch:login`은 매번 이 경고를 다시 보여 줍니다. 이 위험을 받아들일 수 없다면 로그인하지 마세요.
