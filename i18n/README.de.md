@@ -41,7 +41,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 
 ## Was Sie sehen werden
 
-- Die neue Sitzung beginnt mit einem Hinweis wie `NeoSwitch: this session uses Gemini 4 Neon through your Google account (Antigravity sign-in). Ignore the Claude model name in the header. The first reply can take a while.`
+- Sobald NeoSwitch eingerichtet ist, beginnt eine neue Sitzung, die es nicht nutzt, höchstens einmal am Tag pro Projekt mit dem Hinweis `NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time.` In Projekten, in denen Sie `/neoswitch:off` ausgeführt haben, erscheint er nicht; `NEOSWITCH_NO_HINT=1` in Ihrer Umgebung schaltet ihn ab.
 - Die Kopfzeile zeigt weiterhin einen Claude-Modellnamen wie `claude-opus-5-5`. Das ist nur eine Beschriftung: Es antwortet Gemini 4 Neon. Ein anderes Modell mit `/model` zu wählen ändert daran nichts.
 - Eine Antwort kann 5 bis 40 Sekunden brauchen, bis die ersten Wörter erscheinen. Das ist normal. Wenn Sie sich mit `/neoswitch:login` angemeldet haben, beginnen Antworten mit `/effort low` früher.
 - Der erste NeoSwitch-Befehl nach einer Installation oder einem Update kann bis zu einer Minute dauern, während sich NeoSwitch vorbereitet.

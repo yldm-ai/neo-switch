@@ -49,6 +49,45 @@ func on(args []string) error {
 	return enableProject(project, currentSession(), nil)
 }
 
+// readyPath records that the last check of the route passed: the SessionStart hook offers /neoswitch:on in sessions that do not use NeoSwitch only then, so it never suggests a switch that would fail.
+func readyPath(dir string) string { return filepath.Join(dir, "ready") }
+
+func setReady(dir string, ready bool) {
+	if !ready {
+		_ = os.Remove(readyPath(dir))
+		return
+	}
+	_ = os.MkdirAll(dir, 0o700)
+	_ = daemon.WriteFileAtomic(readyPath(dir), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+}
+
+// declinedPath lists the projects where the user ran /neoswitch:off, one path per line; the start hint leaves them alone until /neoswitch:on runs there again.
+func declinedPath(dir string) string { return filepath.Join(dir, "declined") }
+
+func setDeclined(dir, project string, declined bool) {
+	data, _ := os.ReadFile(declinedPath(dir))
+	paths := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			paths[line] = true
+		}
+	}
+	// The hook compares against CLAUDE_PROJECT_DIR as Claude Code gives it, which may be a symlink: both spellings are kept.
+	for _, path := range []string{project, projectKey(project)} {
+		if declined {
+			paths[path] = true
+		} else {
+			delete(paths, path)
+		}
+	}
+	var out strings.Builder
+	for path := range paths {
+		out.WriteString(path + "\n")
+	}
+	_ = os.MkdirAll(dir, 0o700)
+	_ = daemon.WriteFileAtomic(declinedPath(dir), []byte(out.String()), 0o600)
+}
+
 // routeNotReadyError means the route cannot answer yet, for a reason the user can fix: the project stays on Claude.
 type routeNotReadyError struct{ reason string }
 
@@ -125,16 +164,18 @@ func enableProject(project string, session claudeSession, models []string) error
 	if err != nil {
 		return err
 	}
-	// A session applies the settings on its next request and keeps them, so switching it to a route that cannot answer would leave it failing until it closes. The route is checked first.
-	if kind == backendAntigravity {
-		if err := antigravityReady(models); err != nil {
-			return err
-		}
-	}
 	dir, err := daemon.Dir()
 	if err != nil {
 		return err
 	}
+	// A session applies the settings on its next request and keeps them, so switching it to a route that cannot answer would leave it failing until it closes. The route is checked first, and its result kept for the start hint.
+	if kind == backendAntigravity {
+		if err := antigravityReady(models); err != nil {
+			setReady(dir, false)
+			return err
+		}
+	}
+	setReady(dir, true)
 	state, err := daemon.EnsureState(dir)
 	if err != nil {
 		return err
@@ -158,6 +199,7 @@ func enableProject(project string, session claudeSession, models []string) error
 	if err := daemon.Enable(key, state, daemon.Route{Bundle: bundle, UserHeaders: userHeaders()}); err != nil {
 		return err
 	}
+	setDeclined(dir, project, false)
 	fmt.Println("This session uses Gemini from your next message (this reply may still come from Claude). Other sessions keep using Claude: windows open in this project and new ones pass their requests through NeoSwitch to Claude unchanged while this session is open. /neoswitch:off returns this session to Claude; when it closes, the project goes back to how it was.")
 	if notice != "" {
 		fmt.Println(notice)
@@ -264,6 +306,7 @@ func off(args []string) error {
 			return err
 		}
 	}
+	setDeclined(dir, project, true)
 	switch {
 	case wasOn:
 		fmt.Println("This session uses Claude from your next message, with your own Claude login.")

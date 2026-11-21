@@ -41,7 +41,7 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 
 ## 切り替え後に表示されるもの
 
-- 新しいセッションの最初に、たとえば `NeoSwitch: this session uses Gemini 4 Neon through your Google account (Antigravity sign-in). Ignore the Claude model name in the header. The first reply can take a while.` のようなメッセージが出ます。
+- NeoSwitch の設定が済むと、NeoSwitch を使っていない新しいセッションの冒頭に、プロジェクトごとに 1 日 1 回まで次のメッセージが出ます: `NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time.` `/neoswitch:off` を実行したプロジェクトでは出ません。環境変数に `NEOSWITCH_NO_HINT=1` を設定すると止まります。
 - ヘッダーには `claude-opus-5-5` のような Claude のモデル名が表示されたままですが、ただの表示です。回答しているのは Gemini 4 Neon です。`/model` でモデルを選んでも変わりません。
 - 回答の最初の文字が出るまで 5〜40 秒かかることがありますが、正常です。`/neoswitch:login` でログインした場合は、`/effort low` で回答が早く始まります。
 - インストールや更新のあと最初の NeoSwitch コマンドは、準備のために最大 1 分ほどかかることがあります。

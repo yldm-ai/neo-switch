@@ -41,7 +41,7 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 
 ## 開啟後你會看到
 
-- 新工作階段開頭會出現一則提示，例如 `NeoSwitch: this session uses Gemini 4 Neon through your Google account (Antigravity sign-in). Ignore the Claude model name in the header. The first reply can take a while.`
+- 設定好 NeoSwitch 之後，沒有使用它的新工作階段開頭會出現一則提示（每個專案每天最多一次）：`NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time.` 執行過 `/neoswitch:off` 的專案不會再出現；在環境變數裡設定 `NEOSWITCH_NO_HINT=1` 可以關掉它。
 - 標題列仍然顯示 Claude 的型號名稱，例如 `claude-opus-5-5`。這只是個標籤，實際回答的是 Gemini 4 Neon。用 `/model` 換模型也不會改變這一點。
 - 每次回答可能要等 5 到 40 秒才出現第一個字，這是正常的。如果你是用 `/neoswitch:login` 登入的，輸入 `/effort low` 可以讓回答更快開始。
 - 安裝或更新後的第一條 NeoSwitch 指令可能要等上一分鐘，NeoSwitch 正在做準備。

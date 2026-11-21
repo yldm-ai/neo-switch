@@ -1,9 +1,13 @@
 #!/bin/sh
 # SessionStart hook. Claude Code waits for it before the first model request, so when this project is routed through NeoSwitch the shared daemon is running (and this session registered with it) before it is needed. Sessions not routed through a local proxy return immediately without building anything.
 . "$(dirname -- "$0")/session-common.sh"
-id=$(neoswitch_session_id "$(cat)")
+input=$(cat)
+id=$(neoswitch_session_id "$input")
 neoswitch_register "$id" "$1"
-neoswitch_routed "$id" || exit 0
+if ! neoswitch_routed "$id"; then
+	neoswitch_hint "$input"
+	exit 0
+fi
 # attach reports its own problems as a systemMessage. When neoswitch.sh itself fails (no Go and no download, a refused checksum), Claude Code would only keep its stderr, which the user does not see, so the last line of it becomes the systemMessage instead. The hook always exits 0 so Claude Code reads that message.
 errors=$(mktemp "${TMPDIR:-/tmp}/neoswitch-hook.XXXXXX") || exit 0
 trap 'rm -f "$errors"' EXIT

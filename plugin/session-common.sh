@@ -36,3 +36,26 @@ neoswitch_routed() {
 	fi
 	[ -n "$1" ] && grep -q "\"$1\"" "$state/opt-ins.json" 2>/dev/null
 }
+
+# neoswitch_hint offers /neoswitch:on in a new session that does not use NeoSwitch, at most once a day per project. Only when the last check of NeoSwitch's route passed (the "ready" file /neoswitch:on and /neoswitch:login keep), never in a project where the user ran /neoswitch:off, never on resume, /clear or compaction, and never with NEOSWITCH_NO_HINT set. It uses the shell alone: a session that does not use NeoSwitch starts no NeoSwitch program.
+neoswitch_hint() {
+	[ -z "${NEOSWITCH_NO_HINT:-}" ] || return 0
+	case $1 in
+	*'"source":"startup"'* | *'"source": "startup"'*) ;;
+	*) return 0 ;;
+	esac
+	state=$(neoswitch_state_dir)
+	[ -f "$state/ready" ] || return 0
+	project=${CLAUDE_PROJECT_DIR:-$(pwd)}
+	if [ -f "$state/declined" ] && grep -Fxq "$project" "$state/declined" 2>/dev/null; then
+		return 0
+	fi
+	today=$(date +%Y-%m-%d)
+	marker="$state/hinted/$(printf '%s' "$project" | cksum | cut -d' ' -f1)"
+	if [ "$(cat "$marker" 2>/dev/null)" = "$today" ]; then
+		return 0
+	fi
+	mkdir -p "$state/hinted" 2>/dev/null && printf '%s\n' "$today" >"$marker" 2>/dev/null
+	printf '%s\n' '{"systemMessage":"NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time."}'
+	return 0
+}

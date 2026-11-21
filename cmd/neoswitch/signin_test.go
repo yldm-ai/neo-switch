@@ -543,3 +543,37 @@ func TestOnRefusesSignedOutAgy(t *testing.T) {
 		t.Fatal("settings were written for a signed-out agy")
 	}
 }
+
+// The start hint offers /neoswitch:on only after a check of the route passed, and never in a project the user turned off.
+func TestStartHintStateFollowsOnAndOff(t *testing.T) {
+	dir := fakeSignInEnv(t)
+	project := t.TempDir()
+	if err := on([]string{project}); err == nil {
+		t.Fatal("a signed-out agy was switched on")
+	}
+	if _, err := os.Stat(readyPath(dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a failed check left the route marked ready: %v", err)
+	}
+	if err := os.WriteFile(os.Getenv("FAKE_SIGNED_IN"), []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_MODELS", provider.DefaultModel)
+	if err := on([]string{project}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(readyPath(dir)); err != nil {
+		t.Fatalf("a passed check was not recorded: %v", err)
+	}
+	if err := off([]string{project}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(declinedPath(dir)); !strings.Contains(string(data), project) {
+		t.Fatalf("off did not record the project: %q", data)
+	}
+	if err := on([]string{project}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(declinedPath(dir)); strings.Contains(string(data), project) {
+		t.Fatalf("on did not clear the project: %q", data)
+	}
+}
