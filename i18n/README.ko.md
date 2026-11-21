@@ -41,7 +41,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 
 ## 전환 후 보이는 것
 
-- 새 세션이 시작될 때 `NeoSwitch: this session uses Gemini 4 Neon through your Google account (Antigravity sign-in). Ignore the Claude model name in the header. The first reply can take a while.` 같은 안내가 나옵니다.
+- NeoSwitch 설정을 마치면, NeoSwitch를 쓰지 않는 새 세션의 시작에 프로젝트마다 하루 한 번까지 이런 안내가 나옵니다: `NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time.` `/neoswitch:off`를 실행한 프로젝트에서는 나오지 않으며, 환경 변수에 `NEOSWITCH_NO_HINT=1`을 설정하면 꺼집니다.
 - 헤더에는 `claude-opus-5-5` 같은 Claude 모델 이름이 그대로 보이지만 표시일 뿐이고, 실제로 답하는 것은 Gemini 4 Neon입니다. `/model`로 다른 모델을 골라도 바뀌지 않습니다.
 - 답의 첫 글자가 나오기까지 5~40초가 걸릴 수 있으며 정상입니다. `/neoswitch:login`으로 로그인했다면 `/effort low`로 답이 더 빨리 시작됩니다.
 - 설치나 업데이트 후 첫 NeoSwitch 명령은 준비 때문에 최대 1분쯤 걸릴 수 있습니다.

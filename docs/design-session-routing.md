@@ -1,6 +1,6 @@
 # Design: per-session routing that never takes Claude away
 
-Status: phases 1 and 2 implemented, 2026-11-21 (phase 3, the start hint, is next). It supersedes how routing works today: `ANTHROPIC_AUTH_TOKEN` in project settings, and a project that is either routed or not.
+Status: phases 1 to 3 implemented, 2026-11-21. It supersedes how routing works today: `ANTHROPIC_AUTH_TOKEN` in project settings, and a project that is either routed or not.
 
 ## Requirements
 
