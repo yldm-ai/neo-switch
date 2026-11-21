@@ -40,6 +40,8 @@ type Options struct {
 	Backend string
 	// Version is the NeoSwitch version of the daemon binary, reported by Status so a session started after an update can tell it is served by the earlier version.
 	Version string
+	// Model is the model the daemon answers with, fixed when it starts. Reported by Status so a session that asks for another model (GEMINI_MODEL) can tell it gets this one.
+	Model string
 	// Release is called with a project once no session that opted in there is left. The next session in the project then starts on Claude. It runs while attaches wait, so a session turning the project on again lands after it.
 	Release func(project string)
 	// IdleGrace keeps the daemon running after its last known session ended while requests of sessions it cannot place keep arriving: windows that applied a project's settings while another session switched it, without ever starting a hook NeoSwitch saw.
@@ -53,6 +55,8 @@ type Info struct {
 	Sessions int    `json:"sessions"`
 	Backend  string `json:"backend"`
 	Version  string `json:"version,omitempty"`
+	// Model is empty for daemons from versions that did not report it.
+	Model string `json:"model,omitempty"`
 	// OptedIn answers for the session named in the status request: its model requests go to Gemini.
 	OptedIn bool `json:"opted_in,omitempty"`
 }
@@ -145,7 +149,7 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Info{Sessions: sessions.len(), Backend: opts.Backend, Version: opts.Version, OptedIn: sessions.optedIn(r.URL.Query().Get("session"))})
+		_ = json.NewEncoder(w).Encode(Info{Sessions: sessions.len(), Backend: opts.Backend, Version: opts.Version, Model: opts.Model, OptedIn: sessions.optedIn(r.URL.Query().Get("session"))})
 	})
 	if s.TLS {
 		mux.Handle("/", &router{state: s, sessions: sessions, gemini: proxy, passthrough: opts.Passthrough})

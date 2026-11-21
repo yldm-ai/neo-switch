@@ -98,11 +98,15 @@ func (e *routeNotReadyError) Error() string {
 // preflightTimeout bounds the check of agy before a project is switched; a signed-in agy answers in about two seconds.
 var preflightTimeout = 30 * time.Second
 
-// antigravityReady checks that agy is signed in and offers the configured model, starting agy when models is nil. agy refusing to start counts as not ready, since every request would then fail the same way.
-func antigravityReady(models []string) error {
+// antigravityReady checks that agy is signed in and offers model, or the configured model when model is "", starting agy when models is nil. agy refusing to start counts as not ready, since every request would then fail the same way.
+func antigravityReady(model string, models []string) error {
 	backend, err := provider.NewAntigravityACPFromEnv(context.Background())
 	if err != nil {
 		return &routeNotReadyError{reason: sentence(err.Error())}
+	}
+	shared := model != "" && model != backend.Model()
+	if model == "" {
+		model = backend.Model()
 	}
 	if models == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), preflightTimeout)
@@ -116,8 +120,12 @@ func antigravityReady(models []string) error {
 		}
 		models = offered
 	}
-	if len(models) > 0 && !slices.Contains(models, backend.Model()) {
-		return &routeNotReadyError{reason: provider.ModelNotOfferedMessage(backend.Model(), models)}
+	if len(models) > 0 && !slices.Contains(models, model) {
+		if shared {
+			// GEMINI_MODEL cannot help while the running daemon answers every switched session with its own model.
+			return &routeNotReadyError{reason: "Other Claude Code windows started NeoSwitch with " + model + ", which your Google account's Antigravity plan does not offer (it offers " + strings.Join(models, ", ") + "). Close all Claude Code windows, open Claude Code again with GEMINI_MODEL set to one of those, and run /neoswitch:on."}
+		}
+		return &routeNotReadyError{reason: provider.ModelNotOfferedMessage(model, models)}
 	}
 	return nil
 }
@@ -170,7 +178,7 @@ func enableProject(project string, session claudeSession, models []string) error
 	}
 	// A session applies the settings on its next request and keeps them, so switching it to a route that cannot answer would leave it failing until it closes. The route is checked first, and its result kept for the start hint.
 	if kind == backendAntigravity {
-		if err := antigravityReady(models); err != nil {
+		if err := antigravityReady(runningModel(dir), models); err != nil {
 			setReady(dir, false)
 			return err
 		}
@@ -212,6 +220,19 @@ func enableProject(project string, session claudeSession, models []string) error
 		}
 	}
 	return nil
+}
+
+// runningModel is the model of the daemon already running, which answers this session whatever GEMINI_MODEL says, or "" when none runs or it does not report one.
+func runningModel(dir string) string {
+	state, ok, err := daemon.LoadState(dir)
+	if err != nil || !ok {
+		return ""
+	}
+	info, running := daemon.Status(state)
+	if !running {
+		return ""
+	}
+	return info.Model
 }
 
 // userExtraCAs is the CA file the user's environment adds, which NeoSwitch's bundle keeps, or "" when that is NeoSwitch's own bundle.
@@ -267,7 +288,7 @@ func serveSession(dir string, state *daemon.State, session daemon.Session) (noti
 	if err != nil {
 		return "", fmt.Errorf("NeoSwitch could not start (details are in %s)", filepath.Join(dir, "daemon.log"))
 	}
-	if info, running := daemon.Status(*state); running && (info.Backend != "" && info.Backend != label || info.Version != version) {
+	if info, running := daemon.Status(*state); running && (info.Backend != "" && info.Backend != label || info.Version != version || info.Model != "" && info.Model != model) {
 		return attachNotice("", model, label, info, running, false), nil
 	}
 	return "", nil
@@ -557,6 +578,8 @@ func attachNotice(notice, model, label string, info daemon.Info, running, tracke
 	switch {
 	case running && info.Backend != "" && info.Backend != label:
 		notes = append(notes, "NeoSwitch: other Claude Code windows still share the earlier setup ("+plainLabel(info.Backend)+"), so this session uses it too. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to switch to "+modelName(model)+" through "+plainLabel(label)+".")
+	case running && info.Model != "" && info.Model != model:
+		notes = append(notes, "NeoSwitch: other Claude Code windows started NeoSwitch with "+modelName(info.Model)+", so this session uses it too. To use "+modelName(model)+", close all Claude Code windows, open Claude Code again with the same GEMINI_MODEL and run /neoswitch:on.")
 	case running && info.Version != version:
 		notes = append(notes, "NeoSwitch: other Claude Code windows still use the earlier NeoSwitch version, so this session does too. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to use the update.")
 	case notice == "":
@@ -685,7 +708,7 @@ func runDaemon() error {
 		}
 		fmt.Fprintf(os.Stderr, "NeoSwitch: %s is back on Claude\n", project)
 	}
-	if err := daemon.Run(ctx, state, handler, daemon.Options{Backend: backendName, Version: version, Release: release, Passthrough: passthrough}); err != nil {
+	if err := daemon.Run(ctx, state, handler, daemon.Options{Backend: backendName, Version: version, Model: model, Release: release, Passthrough: passthrough}); err != nil {
 		return err
 	}
 	if ctx.Err() != nil {
