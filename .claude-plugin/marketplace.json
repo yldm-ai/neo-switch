@@ -7,7 +7,7 @@
       "source": {
         "source": "github",
         "repo": "yldm-ai/neo-switch",
-        "ref": "v0.4.2"
+        "ref": "v0.4.3"
       },
       "description": "Keep Claude Code, switch the model: use Gemini 4 Neon in Claude Code through a local Anthropic-compatible proxy, with Antigravity OAuth, the Gemini API or Vertex AI.",
       "keywords": [
