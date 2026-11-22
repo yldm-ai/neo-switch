@@ -76,7 +76,8 @@ func (a *AntigravityACP) SearchWeb(ctx context.Context, req translate.Request, o
 		return translate.SearchResult{}, err
 	}
 	defer c.release()
-	s, err := a.newSession(ctx, c)
+	// The search answers the main thread's WebSearch tool, so the main model runs it.
+	s, err := a.newSession(ctx, c, a.model)
 	if err != nil {
 		return translate.SearchResult{}, err
 	}

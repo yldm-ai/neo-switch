@@ -73,6 +73,8 @@ type acpSession struct {
 	system, tools string
 	// level is the thought level NeoSwitch selected, or "" for agy's default.
 	level acp.SessionConfigValueId
+	// model is the model that answers the session; a request continues only a session of the model it asks for.
+	model string
 	// owner is the owner of the request the session answered last (originRole), "" when Claude Code did not say.
 	owner string
 	main  bool
@@ -184,14 +186,14 @@ func textKey(text string) string {
 }
 
 // claim removes and returns the idle session a request may continue, with how many of the request's messages it holds already; nil when there is none. keys are the request's historyKeys. Sessions idle for longer than acpIdleTimeout are closed on the way.
-func (c *acpConn) claim(keys []string, role acpRole, owner string) (*acpSession, int) {
+func (c *acpConn) claim(keys []string, role acpRole, owner, model string) (*acpSession, int) {
 	c.mu.Lock()
 	expired := c.expireLocked(time.Now())
 	defer func() { go c.closeSessions(expired) }()
 	defer c.mu.Unlock()
 	held := len(keys) - 2 // every message but the new one
 	for i, s := range c.idle {
-		if s.key != keys[held] {
+		if s.key != keys[held] || s.model != model {
 			continue
 		}
 		mayTake := false
@@ -218,7 +220,7 @@ func (c *acpConn) claim(keys []string, role acpRole, owner string) (*acpSession,
 	}
 	best, from := -1, 0
 	for i, s := range c.idle {
-		if m, ok := at[s.branch]; ok && s.owner == owner && s.branch != "" && m > from {
+		if m, ok := at[s.branch]; ok && s.owner == owner && s.model == model && s.branch != "" && m > from {
 			best, from = i, m
 		}
 	}
@@ -304,6 +306,8 @@ type acpExchange struct {
 	contents []*genai.Content
 	role     acpRole
 	owner    string
+	// model is the model the request asked for (modelFor).
+	model string
 	// branch is the main history a background session continues from, when it started from it or caught up with it for this request; "" when it continued its own exchange.
 	branch string
 	result acp.PromptResponse

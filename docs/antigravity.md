@@ -58,6 +58,17 @@ So `agy` runs under a tool guard:
 
 `search_web` runs without asking: it touches nothing on this computer, but its query reaches Google. NeoSwitch uses it for WebSearch (below). Claude Code's own tools run only in Claude Code, under its permission rules.
 
+## Background requests
+
+At the end of every turn Claude Code asks for a prompt suggestion, and it names sessions with short side requests. These requests read the conversation without building on it, so they go to `gemini-3.8-flash` instead of spending the main model's quota. `agy` reports quotas per model.
+
+- **Background model:** prompt suggestions (class `auxiliary`, kind `followup-generation`) and Claude Code's tool-free side queries such as session titles (kind `summary-extraction` without tools).
+- **Main model:** everything that builds on the conversation. That is the main thread, compactions, subagents, workflow agents, memory extraction and WebSearch. The away summary stays on the main model too: it is sent the way memory extraction is, and the two cannot be told apart.
+- **Sessions:** a session is only ever continued with the model that answers it.
+- **Thought levels:** they follow the session's model. `gemini-3.8-flash` offers no `xhigh`, so a request asking for it runs at the model's default.
+- **Fallback:** when the account's plan does not offer the background model, background requests use the main model, and the daemon log says so once.
+- **Setting:** `NEOSWITCH_BACKGROUND_MODEL` chooses another model, or `main` keeps everything on the main model.
+
 ## Web search
 
 Claude Code's WebSearch tool asks Anthropic's API to run its web search server tool. NeoSwitch answers that request with `agy`'s Google search instead, so WebSearch works without Claude and without another key:
