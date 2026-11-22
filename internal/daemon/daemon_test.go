@@ -54,9 +54,9 @@ func TestEnableAndDisablePreserveOtherSettings(t *testing.T) {
 	if env["FOO"] != "bar" || env[envBaseURL] != "https://"+s.Listen || env[envAuthToken] != nil || env[envHeaders] != "X-Corp: 1\n"+TokenHeader+": "+s.Token || env[envExtraCAs] != BundlePath(s.dir) || settings["permissions"] == nil {
 		t.Fatalf("settings after enable = %s", data)
 	}
-	// Without this, a session started by a gateway launcher keeps the launcher's ANTHROPIC_BASE_URL and bypasses the proxy.
-	if env[EnvUseGateway] != "0" {
-		t.Fatalf("enable must turn Claude Code gateway mode off: %s", data)
+	// A session started by a gateway launcher keeps its gateway: forcing it through the proxy would pass its gateway credential on to Anthropic.
+	if _, present := env[EnvUseGateway]; present {
+		t.Fatalf("enable must leave Claude Code gateway mode alone: %s", data)
 	}
 
 	if err := Disable(project, s); err != nil {
@@ -87,6 +87,29 @@ func TestDisableLeavesForeignBaseURL(t *testing.T) {
 	_ = json.Unmarshal(data, &settings)
 	if settings["env"]["ANTHROPIC_BASE_URL"] != "https://gateway.example" || settings["env"]["ANTHROPIC_AUTH_TOKEN"] != "theirs" {
 		t.Fatalf("foreign gateway removed: %s", data)
+	}
+}
+
+// Versions up to 0.4.1 turned Claude Code gateway mode off for the project, which sent the gateway sessions there, such as those of `everyapi use claude`, to Anthropic with the gateway's credential. Switching the project again removes that entry, and leaves a value the user set.
+func TestEnableRemovesGatewayOverrideOfEarlierVersions(t *testing.T) {
+	s, err := EnsureState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ before, after any }{{"0", nil}, {"1", "1"}} {
+		project := t.TempDir()
+		path := settingsPath(project)
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		_ = os.WriteFile(path, []byte(`{"env":{"CLAUDE_CODE_USE_GATEWAY":"`+tc.before.(string)+`"}}`), 0o644)
+		if err := Enable(project, s, Route{Bundle: BundlePath(s.dir)}); err != nil {
+			t.Fatal(err)
+		}
+		var settings map[string]map[string]any
+		data, _ := os.ReadFile(path)
+		_ = json.Unmarshal(data, &settings)
+		if settings["env"][EnvUseGateway] != tc.after {
+			t.Fatalf("gateway mode %q after enable = %v, want %v", tc.before, settings["env"][EnvUseGateway], tc.after)
+		}
 	}
 }
 

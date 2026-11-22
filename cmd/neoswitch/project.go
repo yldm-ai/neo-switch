@@ -374,7 +374,7 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 		}
 	}
 	// The daemon routes by session, so it is the one that knows whether this session uses Gemini; its env only tells whether its requests pass through NeoSwitch at all.
-	through := ok && os.Getenv("ANTHROPIC_BASE_URL") == state.BaseURL()
+	through := ok && os.Getenv("ANTHROPIC_BASE_URL") == state.BaseURL() && !gatewayModeOn()
 	// configuredBackend checks credentials and agy locally without calling the model, so a missing sign-in is reported instead of a route that cannot work.
 	_, model, label, backendErr := configuredBackend(context.Background())
 	var info daemon.Info
@@ -489,7 +489,8 @@ func attach(args []string) error {
 		info, _ := daemon.StatusOf(state, *session)
 		opted = info.OptedIn
 	}
-	routed := base == state.BaseURL()
+	// A gateway session keeps the gateway's ANTHROPIC_BASE_URL whatever the project settings, which are applied to this hook's environment, say: its requests never reach NeoSwitch, so there is nothing to attach or announce.
+	routed := base == state.BaseURL() && !gatewayModeOn()
 	if !routed && !opted {
 		if legacyRoute(base, os.Getenv("ANTHROPIC_AUTH_TOKEN"), state) && !*quiet {
 			// Settings of a NeoSwitch from before TLS that no daemon serves any more: this session cannot answer, and the next one should not inherit them.
@@ -597,7 +598,7 @@ func attachNotice(notice, model, label string, info daemon.Info, running, tracke
 	return strings.Join(notes, " ")
 }
 
-// gatewayModeOn reports whether the session runs in Claude Code's gateway mode. Project settings that turn it off are already applied to the hook's environment.
+// gatewayModeOn reports whether the session runs in Claude Code's gateway mode, in which its requests go to the gateway its launcher named, not to the project's ANTHROPIC_BASE_URL.
 func gatewayModeOn() bool {
 	return envTrue(daemon.EnvUseGateway)
 }

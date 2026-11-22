@@ -96,10 +96,9 @@ The Google sign-in is kept by `agy`, not by NeoSwitch, and stays in place; so do
 
 ## What NeoSwitch changes
 
-While a session in a project uses Gemini 4 Neon, NeoSwitch adds four entries to the `env` object of that project's `.claude/settings.local.json`, and removes them once no session there uses it:
+While a session in a project uses Gemini 4 Neon, NeoSwitch adds three entries to the `env` object of that project's `.claude/settings.local.json`, and removes them once no session there uses it:
 
 - `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` and `NODE_EXTRA_CA_CERTS` send the project's Claude Code requests to NeoSwitch on this computer, over an encrypted connection only NeoSwitch can answer. NeoSwitch answers the sessions you switched with Gemini 4 Neon and passes every other request on to Claude unchanged, with your own Claude login, which it neither keeps nor logs. The header holds a key that only opens NeoSwitch on this computer.
-- `CLAUDE_CODE_USE_GATEWAY=0` makes those sessions talk to NeoSwitch directly. Some tools that start Claude Code through another gateway turn gateway mode on, and Claude Code would then ignore NeoSwitch.
 
 In a Git project, NeoSwitch also adds `.claude/settings.local.json` to the clone's own exclude list (`.git/info/exclude`), so the token stays out of commits; your `.gitignore` is not touched.
 

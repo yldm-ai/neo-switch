@@ -96,10 +96,9 @@ El inicio de sesión de Google lo guarda `agy`, no NeoSwitch, y se queda donde e
 
 ## Qué cambia NeoSwitch
 
-Mientras una sesión de un proyecto usa Gemini 4 Neon, NeoSwitch añade cuatro entradas al objeto `env` del `.claude/settings.local.json` de ese proyecto, y las quita cuando ninguna sesión de allí lo usa:
+Mientras una sesión de un proyecto usa Gemini 4 Neon, NeoSwitch añade tres entradas al objeto `env` del `.claude/settings.local.json` de ese proyecto, y las quita cuando ninguna sesión de allí lo usa:
 
 - `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` y `NODE_EXTRA_CA_CERTS` envían las solicitudes de Claude Code del proyecto a NeoSwitch en este ordenador, por una conexión cifrada que solo NeoSwitch puede responder. NeoSwitch responde con Gemini 4 Neon a las sesiones que cambiaste y pasa cualquier otra solicitud a Claude sin cambios, con tu propio inicio de sesión de Claude, que no guarda ni registra. El encabezado lleva una clave que solo abre NeoSwitch en este ordenador.
-- `CLAUDE_CODE_USE_GATEWAY=0` hace que esas sesiones hablen directamente con NeoSwitch. Algunas herramientas que inician Claude Code a través de otra pasarela activan el modo pasarela, y entonces Claude Code ignoraría NeoSwitch.
 
 En un proyecto Git, NeoSwitch también añade `.claude/settings.local.json` a la lista de exclusión propia del clon (`.git/info/exclude`), para que el token no entre en los commits; tu `.gitignore` no se toca.
 

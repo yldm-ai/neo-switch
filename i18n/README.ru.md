@@ -96,10 +96,9 @@ claude plugin marketplace remove neoswitch
 
 ## Что меняет NeoSwitch
 
-Пока сессия в проекте использует Gemini 4 Neon, NeoSwitch добавляет четыре записи в объект `env` файла `.claude/settings.local.json` этого проекта и удаляет их, когда ни одна сессия там его больше не использует:
+Пока сессия в проекте использует Gemini 4 Neon, NeoSwitch добавляет три записи в объект `env` файла `.claude/settings.local.json` этого проекта и удаляет их, когда ни одна сессия там его больше не использует:
 
 - `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` и `NODE_EXTRA_CA_CERTS` направляют запросы Claude Code этого проекта в NeoSwitch на этом компьютере по зашифрованному соединению, на которое может ответить только NeoSwitch. Переключённым сессиям NeoSwitch отвечает с помощью Gemini 4 Neon, а все остальные запросы передаёт в Claude без изменений, с вашим собственным входом в Claude, который он не хранит и не записывает. Заголовок содержит ключ, открывающий только NeoSwitch на этом компьютере.
-- `CLAUDE_CODE_USE_GATEWAY=0` заставляет эти сессии обращаться к NeoSwitch напрямую. Некоторые инструменты, запускающие Claude Code через другой шлюз, включают режим шлюза, и тогда Claude Code проигнорировал бы NeoSwitch.
 
 В Git-проекте NeoSwitch также добавляет `.claude/settings.local.json` в собственный список исключений клона (`.git/info/exclude`), чтобы токен не попал в коммиты; ваш `.gitignore` не меняется.
 

@@ -59,6 +59,29 @@ func TestAttachLeavesOtherLocalProxiesAlone(t *testing.T) {
 }
 
 // The plugin's hooks start NeoSwitch only for sessions it may route; another local proxy's sessions must not start it on every session start and prompt.
+// A session started by a gateway launcher such as `everyapi use claude` keeps the gateway's ANTHROPIC_BASE_URL in gateway mode, while its hooks see the project's NeoSwitch address. Its requests never reach NeoSwitch, so the hook must neither attach it nor tell it that it reaches Claude through NeoSwitch.
+func TestAttachLeavesGatewaySessionsAlone(t *testing.T) {
+	isolateBackendEnv(t, false)
+	state, err := daemon.EnsureState(os.Getenv("NEOSWITCH_STATE_DIR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	if err := daemon.Enable(projectKey(project), state, daemon.Route{Bundle: daemon.BundlePath(os.Getenv("NEOSWITCH_STATE_DIR"))}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_BASE_URL", state.BaseURL())
+	t.Setenv("CLAUDE_CODE_USE_GATEWAY", "1")
+	out := stdoutOf(t, func() error { return attach([]string{"--pid", "1", "--session", "gateway-test"}) })
+	if out != "" {
+		t.Fatalf("a gateway session was treated as routed through NeoSwitch: output %q", out)
+	}
+	if _, running := daemon.Status(state); running {
+		t.Fatal("a gateway session started the daemon")
+	}
+}
+
 func TestHooksLeaveOtherLocalProxiesAlone(t *testing.T) {
 	// The hook reads the token from the state file as NeoSwitch writes it.
 	stateDir := t.TempDir()

@@ -96,10 +96,9 @@ Google 로그인 정보는 NeoSwitch가 아니라 `agy`가 보관하며 그대�
 
 ## NeoSwitch가 바꾸는 것
 
-어떤 프로젝트의 세션이 Gemini 4 Neon을 쓰는 동안 NeoSwitch는 그 프로젝트의 `.claude/settings.local.json` 안 `env` 객체에 네 항목을 추가하고, 그곳에서 쓰는 세션이 없어지면 다시 지웁니다.
+어떤 프로젝트의 세션이 Gemini 4 Neon을 쓰는 동안 NeoSwitch는 그 프로젝트의 `.claude/settings.local.json` 안 `env` 객체에 세 항목을 추가하고, 그곳에서 쓰는 세션이 없어지면 다시 지웁니다.
 
 - `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`: 그 프로젝트의 Claude Code 요청을 NeoSwitch만 응답할 수 있는 암호화된 연결로 이 컴퓨터의 NeoSwitch에 보냅니다. 전환한 세션에는 Gemini 4 Neon이 답하고, 나머지 요청은 본인의 Claude 로그인 그대로 Claude에 넘깁니다. NeoSwitch는 그 로그인을 저장하지도 기록하지도 않습니다. 헤더의 키는 이 컴퓨터의 NeoSwitch에만 쓸 수 있습니다.
-- `CLAUDE_CODE_USE_GATEWAY=0`: 그 세션이 NeoSwitch에 직접 연결되게 합니다. 다른 게이트웨이를 통해 Claude Code를 실행하는 일부 도구는 게이트웨이 모드를 켜는데, 그러면 Claude Code가 NeoSwitch를 무시합니다.
 
 Git 프로젝트에서는 NeoSwitch가 `.claude/settings.local.json`을 해당 클론 전용 제외 목록(`.git/info/exclude`)에도 추가해 토큰이 커밋에 들어가지 않게 합니다. `.gitignore`는 건드리지 않습니다.
 

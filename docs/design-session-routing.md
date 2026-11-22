@@ -38,8 +38,9 @@ Project settings while routed:
 ANTHROPIC_BASE_URL       = https://127.0.0.1:<port>
 ANTHROPIC_CUSTOM_HEADERS = X-NeoSwitch-Token: <token>
 NODE_EXTRA_CA_CERTS      = <state>/ca-bundle.pem   (the user's own NODE_EXTRA_CA_CERTS contents + NeoSwitch's CA)
-CLAUDE_CODE_USE_GATEWAY  = 0
 ```
+
+`CLAUDE_CODE_USE_GATEWAY` is not written. A gateway-mode session (for example `everyapi use claude`) takes `ANTHROPIC_BASE_URL` from its process environment, so it keeps its gateway; `/neoswitch:on` refuses such sessions, and forcing them through the daemon would pass the gateway's credential on to an upstream that does not accept it. The SessionStart hook does not attach them either.
 
 `ANTHROPIC_AUTH_TOKEN` is no longer written. Claude Code keeps the user's login, and connectors stay on (F2).
 
