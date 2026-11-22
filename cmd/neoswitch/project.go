@@ -293,7 +293,27 @@ func serveSession(dir string, state *daemon.State, session daemon.Session) (noti
 	if err != nil {
 		return "", fmt.Errorf("NeoSwitch could not start (details are in %s)", filepath.Join(dir, "daemon.log"))
 	}
-	if info, running := daemon.Status(*state); running && (info.Backend != "" && info.Backend != label || info.Version != version || info.Model != "" && info.Model != model) {
+	info, running := daemon.Status(*state)
+	if !running {
+		return "", nil
+	}
+	// The user asked for this setup and version here, so the open windows move to it.
+	switch planTakeover(dir, info, label, model, true) {
+	case handOver:
+		if startTakeover(dir, true) {
+			return movingNote(), nil
+		}
+	case replaceLegacy:
+		stopErr := stopLegacyDaemon(*state)
+		if stopErr != nil {
+			return "NeoSwitch: other Claude Code windows still use " + versionOrUnknown(info.Version) + " of NeoSwitch, which could not be stopped (" + strings.TrimSuffix(stopErr.Error(), ".") + "), so this session uses it too. " + closeWindowsHint("NeoSwitch "+version), nil
+		}
+		if _, err := daemon.AttachSession(*state, session, spawn); err != nil {
+			return "", fmt.Errorf("NeoSwitch could not start after stopping the earlier version (details are in %s)", filepath.Join(dir, "daemon.log"))
+		}
+		return "NeoSwitch: every open window now uses " + version + ". A reply that was still in progress in another window stopped; ask again there. Each Gemini conversation reads itself again on its next reply, which takes longer once.", nil
+	}
+	if info.Backend != "" && info.Backend != label || daemon.NewerVersion(version, info.Version) || info.Version == "" || info.Model != "" && info.Model != model {
 		return attachNotice("", model, label, info, running, false), nil
 	}
 	return "", nil
@@ -401,9 +421,9 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 		fmt.Fprintf(w, "This session uses %s through %s, and NeoSwitch is running.\n", modelName(model), plainLabel(label))
 		switch {
 		case info.Backend != "" && info.Backend != label:
-			fmt.Fprintf(w, "Other Claude Code windows still share the earlier setup (%s), so this session uses it too. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to switch.\n", plainLabel(info.Backend))
-		case info.Version != version:
-			fmt.Fprintln(w, "NeoSwitch was updated, but this session still uses the earlier version. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to use the update.")
+			fmt.Fprintf(w, "Other Claude Code windows still share the earlier setup (%s), so this session uses it too. %s\n", plainLabel(info.Backend), moveWindowsHint(info, modelName(model)+" through "+plainLabel(label)))
+		case info.Version == "" || daemon.NewerVersion(version, info.Version):
+			fmt.Fprintf(w, "NeoSwitch was updated, but the open windows, this session included, still use %s. %s\n", versionOrUnknown(info.Version), moveWindowsHint(info, "NeoSwitch "+version))
 		default:
 			fmt.Fprintln(w, "Run /neoswitch:off to continue on Claude in this session.")
 		}
@@ -540,6 +560,13 @@ func attach(args []string) error {
 		}
 		return message("NeoSwitch could not start, so this session cannot answer. Start a new Claude Code session, which uses Claude. Details are in " + filepath.Join(dir, "daemon.log") + ".")
 	}
+	// The first session of a new version moves the open windows to it. The hook before every prompt does it too, in windows whose own binary is gone from the cache, which then run the latest one cached (neoswitch.sh --cached).
+	moving := ""
+	if info, running := daemon.Status(state); running && (info.Version == "" || daemon.NewerVersion(version, info.Version)) {
+		if _, model, label, err := configuredBackend(context.Background()); err == nil && planTakeover(dir, info, label, model, false) == handOver && startTakeover(dir, false) {
+			moving = movingNote()
+		}
+	}
 	if *quiet {
 		return nil
 	}
@@ -548,11 +575,14 @@ func attach(args []string) error {
 			// Whether this session was started through a gateway is hidden by the override it applied, so the usual line about how it reaches Claude may be wrong.
 			return message(joinNotes(leftover, updateNotice(dir)))
 		}
-		return message(joinNotes("NeoSwitch: another session in this project uses Gemini, so this one reaches Claude through NeoSwitch, unchanged. Run /neoswitch:on to switch this one to Gemini too.", updateNotice(dir)))
+		return message(joinNotes("NeoSwitch: another session in this project uses Gemini, so this one reaches Claude through NeoSwitch, unchanged. Run /neoswitch:on to switch this one to Gemini too.", moving, updateNotice(dir)))
 	}
 	_, model, label, err := configuredBackend(context.Background())
 	if err != nil {
 		return message(sessionBlocked(err.Error()))
+	}
+	if moving != "" {
+		return message(joinNotes(moving, attachNotice("", model, label, daemon.Info{Backend: label, Version: version, Model: model}, true, true), leftover, updateNotice(dir)))
 	}
 	info, running := daemon.Status(state)
 	return message(joinNotes(attachNotice("", model, label, info, running, true), leftover, updateNotice(dir)))
@@ -596,11 +626,11 @@ func attachNotice(notice, model, label string, info daemon.Info, running, tracke
 	}
 	switch {
 	case running && info.Backend != "" && info.Backend != label:
-		notes = append(notes, "NeoSwitch: other Claude Code windows still share the earlier setup ("+plainLabel(info.Backend)+"), so this session uses it too. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to switch to "+modelName(model)+" through "+plainLabel(label)+".")
+		notes = append(notes, "NeoSwitch: other Claude Code windows still share the earlier setup ("+plainLabel(info.Backend)+"), so this session uses it too. "+moveWindowsHint(info, modelName(model)+" through "+plainLabel(label)))
 	case running && info.Model != "" && info.Model != model:
-		notes = append(notes, "NeoSwitch: other Claude Code windows started NeoSwitch with "+modelName(info.Model)+", so this session uses it too. To use "+modelName(model)+", close all Claude Code windows, open Claude Code again with the same GEMINI_MODEL and run /neoswitch:on.")
-	case running && info.Version != version:
-		notes = append(notes, "NeoSwitch: other Claude Code windows still use the earlier NeoSwitch version, so this session does too. Close all Claude Code windows, open Claude Code again and run /neoswitch:on to use the update.")
+		notes = append(notes, "NeoSwitch: other Claude Code windows started NeoSwitch with "+modelName(info.Model)+", so this session uses it too. "+moveWindowsHint(info, modelName(model)))
+	case running && (info.Version == "" || daemon.NewerVersion(version, info.Version)):
+		notes = append(notes, "NeoSwitch: other Claude Code windows still use "+versionOrUnknown(info.Version)+" of NeoSwitch, so this session does too. "+moveWindowsHint(info, "NeoSwitch "+version))
 	case notice == "":
 		notes = append(notes, "NeoSwitch: this session uses "+modelName(model)+" through "+plainLabel(label)+". Ignore the Claude model name in the header. The first reply can take a while.")
 		if tracked {
@@ -643,8 +673,8 @@ func hookMessage(message string) error {
 	return json.NewEncoder(os.Stdout).Encode(map[string]string{"systemMessage": message})
 }
 
-// spawnDaemon starts `neoswitch daemon` in its own session so it survives the hook process, with a scrubbed environment: Claude Code's API settings and plugin options other than the Gemini key stay behind.
-func spawnDaemon(dir string) error {
+// spawnDaemon starts `neoswitch daemon` in its own session so it survives the hook process, with a scrubbed environment: Claude Code's API settings and plugin options other than the Gemini key stay behind. args are the daemon's flags, such as --take-over.
+func spawnDaemon(dir string, args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -654,7 +684,7 @@ func spawnDaemon(dir string) error {
 		return err
 	}
 	defer logFile.Close()
-	cmd := exec.Command(self, "daemon")
+	cmd := exec.Command(self, append([]string{"daemon"}, args...)...)
 	cmd.Dir = dir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -678,7 +708,14 @@ func withoutClaudeCode(environ []string) []string {
 	return env
 }
 
-func runDaemon() error {
+// runDaemon serves the shared daemon. With --take-over it replaces the one running (planTakeover decided it may); --explicit marks a takeover the user asked for with /neoswitch:on.
+func runDaemon(args []string) error {
+	flags := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	takeOver := flags.Bool("take-over", false, "take the port over from the running daemon")
+	explicit := flags.Bool("explicit", false, "the user asked for the takeover")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 	dir, err := daemon.Dir()
 	if err != nil {
 		return err
@@ -693,8 +730,18 @@ func runDaemon() error {
 	// The sessions that pass through to Claude need the daemon whatever happened to the model side, so a backend problem does not stop it: the opted-in sessions get an answer saying what to fix.
 	backend, model, backendName, err := configuredBackend(context.Background())
 	if err != nil {
+		if *takeOver {
+			// The running daemon may be able to answer; this one could not.
+			return fmt.Errorf("NeoSwitch %s did not take over: no model: %w", version, err)
+		}
 		fmt.Fprintf(os.Stderr, "NeoSwitch daemon: no model: %v\n", err)
 		backend, backendName = nil, "no model"
+	}
+	if *takeOver && !*explicit {
+		// The setup is checked again here, where it is final: an update must not change the model or account the open windows use.
+		if info, running := daemon.Status(state); running && (info.Backend != "" && info.Backend != backendName || info.Model != "" && info.Model != model) {
+			return fmt.Errorf("NeoSwitch %s did not take over: the running daemon serves %s with %s, and this one would serve %s with %s", version, info.Backend, info.Model, backendName, model)
+		}
 	}
 	if closer, ok := backend.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
@@ -727,7 +774,18 @@ func runDaemon() error {
 		}
 		fmt.Fprintf(os.Stderr, "NeoSwitch: %s is back on Claude\n", project)
 	}
-	if err := daemon.Run(ctx, state, handler, daemon.Options{Backend: backendName, Version: version, Model: model, Release: release, Passthrough: passthrough}); err != nil {
+	if *takeOver {
+		fmt.Fprintf(os.Stderr, "NeoSwitch %s taking over %s\n", version, state.BaseURL())
+	}
+	err = daemon.Run(ctx, state, handler, daemon.Options{Backend: backendName, Version: version, Model: model, Release: release, Passthrough: passthrough, TakeOver: *takeOver, TakeOverExplicit: *explicit})
+	switch {
+	case errors.Is(err, daemon.ErrHandedOver):
+		fmt.Fprintln(os.Stderr, "NeoSwitch daemon stopped: the NeoSwitch that took over serves the open windows now")
+		return nil
+	case errors.Is(err, daemon.ErrTakeoverBusy), errors.Is(err, daemon.ErrHandoverRefused):
+		fmt.Fprintf(os.Stderr, "NeoSwitch %s did not take over: %v\n", version, err)
+		return nil
+	case err != nil:
 		return err
 	}
 	if ctx.Err() != nil {

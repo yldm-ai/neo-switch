@@ -7,15 +7,25 @@ export NEOSWITCH_PLUGIN=1
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/neoswitch"
 bin="$cache/neoswitch-$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
-# Hooks that run after every reply or as a session ends pass --cached: they run whichever NeoSwitch binary is already here, even one older than the plugin source, and otherwise do nothing, rather than build or download in the middle of the user's session.
+# Hooks that run after every reply or as a session ends pass --cached: they run this plugin's binary when it is here, otherwise the latest release cached, even one older than the plugin source, and otherwise do nothing, rather than build or download in the middle of the user's session. The latest matters for a window whose plugin was updated meanwhile: its hooks then start the takeover that moves every open window to the update (docs/design-session-routing.md, "Updates").
 if [ "${1:-}" = "--cached" ]; then
 	shift
-	for cached in "$bin" "$cache"/neoswitch-*; do
+	if [ -f "$bin" ] && [ -x "$bin" ]; then
+		exec "$bin" "$@"
+	fi
+	latest=
+	for cached in "$cache"/neoswitch-*; do
 		case $cached in *.tmp) continue ;; esac
 		if [ -f "$cached" ] && [ -x "$cached" ]; then
-			exec "$cached" "$@"
+			# A binary that predates is-newer fails it, so a later release is never passed over for it.
+			if [ -z "$latest" ] || "$cached" is-newer "$("$cached" version 2>/dev/null | cut -d' ' -f2)" "$("$latest" version 2>/dev/null | cut -d' ' -f2)" 2>/dev/null; then
+				latest=$cached
+			fi
 		fi
 	done
+	if [ -n "$latest" ]; then
+		exec "$latest" "$@"
+	fi
 	exit 0
 fi
 if [ -x "$bin" ] && [ -z "$(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" \( -name '*.go' -o -name 'go.*' \) -print 2>/dev/null | head -n 1)" ]; then
@@ -24,12 +34,17 @@ fi
 version=v$(tr -d ' \t\r\n' <"$root/VERSION")
 preparing="NeoSwitch: getting ready after an install or update; this can take up to a minute."
 
-# prune removes the binaries of other plugin versions from the cache, keeping $1, the one about to run, and builds or downloads still in progress. A daemon started from a removed binary keeps running; the next session start tells the user it is outdated.
+# prune removes the binaries of other plugin versions from the cache, keeping $1, the one about to run, builds or downloads still in progress, and binaries of later releases: a window still running an earlier plugin rebuilds its own binary when the user clears or resumes a session there, and removing the update then would put every window's hooks back on the earlier release. A daemon started from a removed binary keeps running until a later release takes its port over (see docs/design-session-routing.md, "Updates").
 prune() {
+	keep=$("$1" version 2>/dev/null | cut -d' ' -f2)
 	for old in "$cache"/neoswitch-*; do
 		case $old in
 		"$1" | *.tmp) ;;
-		*) if [ -f "$old" ]; then rm -f "$old"; fi ;;
+		*)
+			if [ -f "$old" ] && ! "$1" is-newer "$("$old" version 2>/dev/null | cut -d' ' -f2)" "$keep" 2>/dev/null; then
+				rm -f "$old"
+			fi
+			;;
 		esac
 	done
 }

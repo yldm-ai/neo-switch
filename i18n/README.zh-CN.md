@@ -46,7 +46,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 - 每次回答可能要等 5 到 40 秒才出现第一个字，这是正常的。如果你是用 `/neoswitch:login` 登录的，输入 `/effort low` 可以让回答更快开始。
 - 安装或更新后的第一条 NeoSwitch 命令可能要等上一分钟，NeoSwitch 在做准备。
 - 随时可以运行 `/neoswitch:status`，它会告诉你当前会话用的是 Claude 还是 Gemini 4 Neon，以及下一步该做什么。
-- 有新版 NeoSwitch 时，会话开头的提示会告诉你，并给出更新命令。打开了自动更新的话，Claude Code 会自己装好新版，关掉所有 Claude Code 窗口再重新打开后生效。
+- 有新版 NeoSwitch 时，会话开头的提示会告诉你，并给出更新命令。打开了自动更新的话，Claude Code 会自己装好新版；已经开着的窗口在有新的 Claude Code 会话启动时就会换到新版。Windows 上要关掉所有 Claude Code 窗口再重新打开后才生效。
 
 ## 出了问题怎么办
 
@@ -55,7 +55,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 | 会话开头的提示说 NeoSwitch 还没设置好 | 运行 `/neoswitch:login`。下一条消息就会用 Gemini 4 Neon。 |
 | 提示说没有安装 `agy` | `/neoswitch:login` 没能自动装上它。在终端里运行 `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，或从 [Google 的下载页](https://antigravity.google/download)安装，再运行一次 `/neoswitch:login`。 |
 | 每条消息都报连接错误，或者会话开头的提示说本会话无法回答 | 运行 `/neoswitch:off`：这个会话从下一条消息起就回到 Claude，即使这条命令自己的回复失败也一样。如果消息仍然失败，输入 `/exit` 并重新运行 `claude`：新会话用的是 Claude，再运行 `/neoswitch:status` 看看该修什么。 |
-| 提示说其他 Claude Code 窗口还在共用之前的设置 | 关掉所有 Claude Code 窗口，重新打开 Claude Code，再运行 `/neoswitch:on`。 |
+| 提示说其他 Claude Code 窗口还在共用之前的设置 | 在这个会话里运行 `/neoswitch:on`，所有开着的窗口都会换到这个会话的设置。Windows 上要关掉所有 Claude Code 窗口，重新打开 Claude Code，再运行 `/neoswitch:on`。 |
 | 提示说 claude.ai connectors 已停用，因为设置了另一个认证来源 | 现在的 NeoSwitch 不会再导致这个提示，是旧版本造成的。请更新插件（见下文）。如果仍然出现，说明有别的工具给 Claude Code 设置了 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`。 |
 | 提示说有别的程序占用了 NeoSwitch 需要的端口 | 关掉那个程序后重新启动 Claude Code，或者运行 `/neoswitch:off`。 |
 | 提示说 NeoSwitch 下载不了它的程序 | 检查网络连接，然后重新启动 Claude Code。 |
@@ -66,7 +66,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 
 - `/neoswitch:off` 让这个会话从下一条消息起回到 Claude，用你自己的 Claude 登录。`/neoswitch:on` 再把它切回 Gemini 4 Neon，不用重新设置。关闭会话也就结束了它的切换：每个新会话都从 Claude 开始。
 
-手动更新：在终端里运行下面两条命令，然后关掉所有 Claude Code 窗口再重新打开：
+手动更新：在终端里运行下面两条命令，然后开一个新的 Claude Code 会话，已经开着的窗口也会换到新版（Windows 上要关掉所有 Claude Code 窗口再重新打开）：
 
 ```bash
 claude plugin marketplace update neoswitch

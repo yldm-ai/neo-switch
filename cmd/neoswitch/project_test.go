@@ -18,7 +18,11 @@ func TestMain(m *testing.M) {
 	// The test binary also plays agy and the sign-in helper for the sign-in by code tests.
 	// It plays the daemon too: /neoswitch:on starts it from the test binary. The binary is never run with this argument otherwise.
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
-		if err := runDaemon(); err != nil {
+		// A test of updates starts daemons of two releases from this one binary.
+		if v := os.Getenv(testVersionEnv); v != "" {
+			version = v
+		}
+		if err := runDaemon(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "neoswitch:", err)
 			os.Exit(1)
 		}
@@ -127,5 +131,60 @@ func TestCallingSession(t *testing.T) {
 	t.Setenv("CLAUDECODE", "")
 	if _, inside := callingSession(); inside {
 		t.Fatal("outside Claude Code must not count as a session")
+	}
+}
+
+// testVersionEnv names the version the daemons this test binary starts report.
+const testVersionEnv = "NEOSWITCH_TEST_VERSION"
+
+// actAsVersion makes this process, and the daemons it starts, NeoSwitch v.
+func actAsVersion(t *testing.T, v string) {
+	t.Helper()
+	released := version
+	t.Cleanup(func() { version = released })
+	version = v
+	t.Setenv(testVersionEnv, v)
+}
+
+// An update reaches the windows already open: the first attach of the new release moves the running daemon's sessions to a daemon of that release, without turning any project back to Claude.
+func TestAttachOfANewerReleaseTakesOverTheRunningDaemon(t *testing.T) {
+	if !daemon.HandoverSupported() {
+		t.Skip("handovers are off on this platform")
+	}
+	stateDir := isolateBackendEnv(t, true)
+	id := inSession(t)
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	actAsVersion(t, "v0.4.4")
+	mustOn(t, project)
+	state, ok, err := daemon.LoadState(stateDir)
+	if err != nil || !ok {
+		t.Fatalf("state: %v %v", ok, err)
+	}
+	if info, ok := daemon.Status(state); !ok || info.Version != "v0.4.4" {
+		t.Fatalf("first daemon: %+v %v", info, ok)
+	}
+
+	actAsVersion(t, "v0.4.5")
+	t.Setenv("ANTHROPIC_BASE_URL", state.BaseURL())
+	if err := attach([]string{"--quiet", "--pid", strconv.Itoa(os.Getpid()), "--session", id}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if info, ok := daemon.StatusOf(state, id); ok && info.Version == "v0.4.5" {
+			if !info.OptedIn {
+				t.Fatalf("the session lost Gemini in the takeover: %+v", info)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			log, _ := os.ReadFile(filepath.Join(stateDir, "daemon.log"))
+			t.Fatalf("no daemon of v0.4.5 took over; daemon.log:\n%s", log)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !settingsExist(t, project) {
+		t.Fatal("the takeover turned the project back to Claude")
 	}
 }

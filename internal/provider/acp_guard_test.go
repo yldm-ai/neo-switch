@@ -107,13 +107,18 @@ func TestInstallToolGuardKeepsWhatIsCurrent(t *testing.T) {
 	hooks := filepath.Join(workspace, ".agents", "hooks.json")
 	before, _ := os.Stat(hooks)
 	// An old hook binary of another version, and an old session's records.
-	old := time.Now().Add(-8 * 24 * time.Hour)
+	old := time.Now().Add(-31 * 24 * time.Hour)
 	stale := filepath.Join(bin, "neoswitch-hook-0000000000000000")
 	record := filepath.Join(workspace, guardRecords, "old-session")
 	for _, path := range []string{stale, record} {
 		_ = os.WriteFile(path, []byte("x"), 0o600)
 		_ = os.Chtimes(path, old, old)
 	}
+	// The hook of a daemon that handed over a week ago may still be finishing a reply.
+	recent := filepath.Join(bin, "neoswitch-hook-1111111111111111")
+	weekOld := time.Now().Add(-8 * 24 * time.Hour)
+	_ = os.WriteFile(recent, []byte("x"), 0o700)
+	_ = os.Chtimes(recent, weekOld, weekOld)
 	time.Sleep(10 * time.Millisecond)
 	if err := installToolGuard(workspace); err != nil {
 		t.Fatal(err)
@@ -125,6 +130,9 @@ func TestInstallToolGuardKeepsWhatIsCurrent(t *testing.T) {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s was not pruned", path)
 		}
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Fatalf("a week-old hook binary was pruned: %v", err)
 	}
 	data, _ := os.ReadFile(hooks)
 	if !bytes.Contains(data, []byte(`"./bin/neoswitch-hook-`+sum+` agy-hook pre-tool"`)) && runtime.GOOS != "windows" {

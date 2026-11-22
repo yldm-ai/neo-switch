@@ -46,7 +46,7 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 - 每次回答可能要等 5 到 40 秒才出現第一個字，這是正常的。如果你是用 `/neoswitch:login` 登入的，輸入 `/effort low` 可以讓回答更快開始。
 - 安裝或更新後的第一條 NeoSwitch 指令可能要等上一分鐘，NeoSwitch 正在做準備。
 - 隨時可以執行 `/neoswitch:status`，它會告訴你目前工作階段用的是 Claude 還是 Gemini 4 Neon，以及下一步該做什麼。
-- 有新版 NeoSwitch 時，工作階段開頭的提示會告訴你，並列出更新指令。開啟了自動更新的話，Claude Code 會自己裝好新版，關閉所有 Claude Code 視窗再重新開啟後生效。
+- 有新版 NeoSwitch 時，工作階段開頭的提示會告訴你，並列出更新指令。開啟了自動更新的話，Claude Code 會自己裝好新版；已經開著的視窗在有新的 Claude Code 工作階段啟動時就會換到新版。Windows 上要關閉所有 Claude Code 視窗再重新開啟後才生效。
 
 ## 出了問題怎麼辦
 
@@ -55,7 +55,7 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 | 工作階段開頭的提示說 NeoSwitch 還沒設定好 | 執行 `/neoswitch:login`。下一則訊息就會使用 Gemini 4 Neon。 |
 | 提示說沒有安裝 `agy` | `/neoswitch:login` 沒能自動裝好它。在終端機執行 `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，或從 [Google 的下載頁](https://antigravity.google/download)安裝，再執行一次 `/neoswitch:login`。 |
 | 每則訊息都出現連線錯誤，或者工作階段開頭的提示說本工作階段無法回答 | 執行 `/neoswitch:off`：這個工作階段從下一則訊息起就回到 Claude，即使這個指令自己的回覆失敗也一樣。如果訊息仍然失敗，輸入 `/exit` 並重新執行 `claude`：新的工作階段用的是 Claude，再執行 `/neoswitch:status` 看看該修什麼。 |
-| 提示說其他 Claude Code 視窗還在共用先前的設定 | 關掉所有 Claude Code 視窗，重新開啟 Claude Code，再執行 `/neoswitch:on`。 |
+| 提示說其他 Claude Code 視窗還在共用先前的設定 | 在這個工作階段執行 `/neoswitch:on`，所有開著的視窗都會換到這個工作階段的設定。Windows 上要關掉所有 Claude Code 視窗，重新開啟 Claude Code，再執行 `/neoswitch:on`。 |
 | 提示說 claude.ai connectors 已停用，因為設定了另一個驗證來源 | 現在的 NeoSwitch 不會再造成這個提示，是舊版本造成的。請更新外掛（見下文）。如果仍然出現，代表有別的工具替 Claude Code 設定了 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`。 |
 | 提示說有別的程式佔用了 NeoSwitch 需要的連接埠 | 關掉那個程式後重新啟動 Claude Code，或者執行 `/neoswitch:off`。 |
 | 提示說 NeoSwitch 無法下載它的程式 | 檢查網路連線，然後重新啟動 Claude Code。 |
@@ -66,7 +66,7 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 
 - `/neoswitch:off` 讓這個工作階段從下一則訊息起回到 Claude，用你自己的 Claude 登入。`/neoswitch:on` 再把它切回 Gemini 4 Neon，不用重新設定。關閉工作階段也就結束了它的切換：每個新的工作階段都從 Claude 開始。
 
-手動更新外掛：在終端機裡執行下面兩條指令，然後關閉所有 Claude Code 視窗再重新開啟：
+手動更新外掛：在終端機裡執行下面兩條指令，然後開一個新的 Claude Code 工作階段，已經開著的視窗也會換到新版（Windows 上要關閉所有 Claude Code 視窗再重新開啟）：
 
 ```bash
 claude plugin marketplace update neoswitch

@@ -46,7 +46,7 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 - Une réponse peut mettre 5 à 40 secondes avant d'afficher ses premiers mots. C'est normal. Si vous vous êtes connecté avec `/neoswitch:login`, `/effort low` fait démarrer les réponses plus tôt.
 - La première commande NeoSwitch après une installation ou une mise à jour peut prendre jusqu'à une minute, le temps que NeoSwitch se prépare.
 - `/neoswitch:status` vous indique à tout moment si cette session utilise Claude ou Gemini 4 Neon, et quoi faire ensuite.
-- Quand une version plus récente de NeoSwitch est disponible, la note de session l'indique et donne les commandes de mise à jour. Avec auto-update activé, Claude Code l'installe tout seul ; elle s'applique une fois toutes les fenêtres Claude Code fermées puis rouvertes.
+- Quand une version plus récente de NeoSwitch est disponible, la note de session l'indique et donne les commandes de mise à jour. Avec auto-update activé, Claude Code l'installe tout seul, et les fenêtres déjà ouvertes passent à elle dès qu'une nouvelle session Claude Code démarre. Sous Windows, elle s'applique une fois toutes les fenêtres Claude Code fermées puis rouvertes.
 
 ## En cas de problème
 
@@ -55,7 +55,7 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 | La note de session dit que NeoSwitch n'est pas encore configuré | Exécutez `/neoswitch:login`. Votre prochain message utilise Gemini 4 Neon. |
 | Un message dit que `agy` n'est pas installé | `/neoswitch:login` n'a pas pu l'installer lui-même. Exécutez `curl -fsSL https://antigravity.google/cli/install.sh \| bash` dans un terminal ou installez-le depuis la [page de téléchargement de Google](https://antigravity.google/download), puis exécutez de nouveau `/neoswitch:login`. |
 | Chaque message échoue avec une erreur de connexion, ou la note de session indique que cette session ne peut pas répondre | Lancez `/neoswitch:off` : cette session continue avec Claude dès son message suivant, même si la réponse à la commande elle-même échoue. Si les messages échouent encore, tapez `/exit` et relancez `claude` : une nouvelle session utilise Claude, et `/neoswitch:status` vous indique quoi corriger. |
-| La note dit que d'autres fenêtres de Claude Code partagent encore la configuration précédente | Fermez toutes les fenêtres de Claude Code, rouvrez Claude Code, puis lancez `/neoswitch:on`. |
+| La note dit que d'autres fenêtres de Claude Code partagent encore la configuration précédente | Lancez `/neoswitch:on` dans cette session : toutes les fenêtres ouvertes passent à sa configuration. Sous Windows, fermez toutes les fenêtres de Claude Code, rouvrez Claude Code, puis lancez `/neoswitch:on`. |
 | Un avertissement indique que les connecteurs claude.ai sont désactivés parce qu'une autre source d'authentification est définie | NeoSwitch ne le provoque plus ; une version antérieure le faisait. Mettez le plugin à jour (voir plus bas). S'il persiste, un autre outil définit `ANTHROPIC_AUTH_TOKEN` ou `ANTHROPIC_API_KEY` pour Claude Code. |
 | La note dit qu'un autre programme utilise le port dont NeoSwitch a besoin | Fermez ce programme et relancez Claude Code, ou exécutez `/neoswitch:off`. |
 | La note dit que NeoSwitch n'a pas pu télécharger son programme | Vérifiez votre connexion internet et relancez Claude Code. |
@@ -66,7 +66,7 @@ La commande affiche aussi un lien, pour le cas où vous ne pouvez pas utiliser l
 
 - `/neoswitch:off` ramène cette session à Claude dès son message suivant, avec votre propre connexion Claude. `/neoswitch:on` la rebascule sur Gemini 4 Neon sans rien reconfigurer. Fermer une session met fin à sa bascule : chaque nouvelle session démarre sur Claude.
 
-Pour mettre à jour à la main, exécutez ceci dans un terminal, puis fermez toutes les fenêtres Claude Code et rouvrez-les :
+Pour mettre à jour à la main, exécutez ceci dans un terminal, puis ouvrez une nouvelle session Claude Code : les fenêtres déjà ouvertes passent aussi à la nouvelle version (sous Windows, fermez toutes les fenêtres Claude Code et rouvrez-les) :
 
 ```bash
 claude plugin marketplace update neoswitch

@@ -48,6 +48,9 @@ type Options struct {
 	IdleGrace time.Duration
 	// Passthrough forwards a request that is not for Gemini, with the user's own credential, to Anthropic. With TLS, the daemon routes every request: the opted-in sessions' model requests go to the proxy, everything else here.
 	Passthrough http.Handler
+	// TakeOver: a daemon may already serve the port; ask it to hand over (handover.go) instead of failing to listen. TakeOverExplicit: the user asked for it, which also replaces a daemon of the same version.
+	TakeOver         bool
+	TakeOverExplicit bool
 }
 
 // Info is what a running daemon reports about itself. Version is empty for daemons from versions that did not report it.
@@ -59,6 +62,8 @@ type Info struct {
 	Model string `json:"model,omitempty"`
 	// OptedIn answers for the session named in the status request: its model requests go to Gemini.
 	OptedIn bool `json:"opted_in,omitempty"`
+	// Handover is the takeover protocol the daemon speaks (HandoverProtocol), 0 when it cannot hand over.
+	Handover int `json:"handover,omitempty"`
 }
 
 // Run serves proxy on s.Listen until every attached Claude Code process has exited, or until StartupGrace passes without any attach. Lifetime is tied to the sessions rather than an idle timer, so a session that sits idle for hours keeps working and nothing outlives the last session.
@@ -72,18 +77,6 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 	if opts.Alive == nil {
 		opts.Alive = processAlive
 	}
-	listener, err := net.Listen("tcp", s.Listen)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", s.Listen, err)
-	}
-	if s.TLS {
-		config, err := serverTLS(s.dir)
-		if err != nil {
-			_ = listener.Close()
-			return err
-		}
-		listener = tls.NewListener(listener, config)
-	}
 	if opts.Release == nil {
 		opts.Release = func(string) {}
 	}
@@ -92,7 +85,25 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 	}
 	sessions := newSessionSet(s.dir, opts.Release)
 	sessions.idleGrace = opts.IdleGrace
-	sessions.load(opts.Alive)
+	protocol := 0
+	if HandoverSupported() {
+		protocol = HandoverProtocol
+		// Made before anyone needs it, so a successor finds the key this daemon checks.
+		if _, err := handoverKey(s.dir); err != nil {
+			return err
+		}
+	}
+	listener, handover, err := listenOrTakeOver(s, opts)
+	if err != nil {
+		return err
+	}
+	// The state on disk is read, and saved, only once this daemon owns the port: a daemon still waiting for it must not overwrite what the serving one saves. After a handover the predecessor's sessions replace it, since they are what it last saved and what happened since.
+	if handover != nil {
+		sessions.adopt(handover, opts.Alive)
+	} else {
+		sessions.load(opts.Alive)
+	}
+	successor := make(chan string, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+attachPath, func(w http.ResponseWriter, r *http.Request) {
 		if !authorized(r, s.Token) {
@@ -104,7 +115,7 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		// A daemon that decided to stop refuses, so Attach starts a new one instead of attaching to one about to exit.
+		// A daemon that decided to stop, or handed over, refuses, so Attach starts or reaches the next one instead.
 		if !sessions.add(body) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -125,6 +136,11 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		// Handed over: the successor's check finds the ended process.
+		if sessions.isFrozen() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		sessions.remove(body.PID)
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -140,6 +156,11 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		// Handed over: an opt-out kept only here would be lost, and the session would stay on Gemini; OptOut asks the successor.
+		if sessions.isFrozen() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(optOutReply{WasOptedIn: sessions.optOut(body.Session)})
 	})
@@ -149,8 +170,11 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Info{Sessions: sessions.len(), Backend: opts.Backend, Version: opts.Version, Model: opts.Model, OptedIn: sessions.optedIn(r.URL.Query().Get("session"))})
+		_ = json.NewEncoder(w).Encode(Info{Sessions: sessions.len(), Backend: opts.Backend, Version: opts.Version, Model: opts.Model, OptedIn: sessions.optedIn(r.URL.Query().Get("session")), Handover: protocol})
 	})
+	if protocol != 0 {
+		mux.HandleFunc("POST "+handoverPath, handoverHandler(s, sessions, opts.Version, successor))
+	}
 	if s.TLS {
 		mux.Handle("/", &router{state: s, sessions: sessions, gemini: proxy, passthrough: opts.Passthrough})
 	} else {
@@ -177,8 +201,93 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			if sessions.prune(opts.Alive, time.Now().After(deadline)) {
 				return shutdown(server)
 			}
+		case version := <-successor:
+			// The sessions are frozen; nothing is pruned or released while the successor starts.
+			ticker.Stop()
+			_ = listener.Close()
+			<-served
+			if answersWithin(s, successorWait) {
+				// Only another daemon can answer now that this one stopped listening. The replies in progress finish here.
+				endHandingOver(s.dir)
+				drain(server, drainLimit)
+				return ErrHandedOver
+			}
+			// The successor never came up: take the port back, and keep every window from trying that version again for a while.
+			again, err := listen(s)
+			if err != nil {
+				endHandingOver(s.dir)
+				if answersWithin(s, time.Second) {
+					drain(server, drainLimit)
+					return ErrHandedOver
+				}
+				drain(server, drainLimit)
+				return fmt.Errorf("NeoSwitch %s did not take over, and %s could not be listened on again: %w", version, s.Listen, err)
+			}
+			listener = again
+			recordFailedTakeover(s.dir, version)
+			sessions.unfreeze()
+			endHandingOver(s.dir)
+			go func() { served <- server.Serve(listener) }()
+			ticker.Reset(opts.PollInterval)
 		}
 	}
+}
+
+// listen opens the daemon's port, with TLS when the state uses it.
+func listen(s State) (net.Listener, error) {
+	listener, err := net.Listen("tcp", s.Listen)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", s.Listen, err)
+	}
+	if s.TLS {
+		config, err := serverTLS(s.dir)
+		if err != nil {
+			_ = listener.Close()
+			return nil, err
+		}
+		listener = tls.NewListener(listener, config)
+	}
+	return listener, nil
+}
+
+// listenOrTakeOver opens the port. With opts.TakeOver it first asks the daemon serving it to hand over, then listens as soon as that daemon frees the port and returns its sessions; when no daemon answers it simply listens.
+func listenOrTakeOver(s State, opts Options) (net.Listener, *Handover, error) {
+	if !opts.TakeOver {
+		listener, err := listen(s)
+		return listener, nil, err
+	}
+	release, ok := acquireTakeoverLock(s.dir)
+	if !ok {
+		return nil, nil, ErrTakeoverBusy
+	}
+	defer release()
+	if _, running := Status(s); !running {
+		listener, err := listen(s)
+		return listener, nil, err
+	}
+	h, err := requestHandover(s, opts.Version, opts.TakeOverExplicit)
+	if err != nil {
+		return nil, nil, err
+	}
+	deadline := time.Now().Add(bindWait)
+	for {
+		listener, err := listen(s)
+		if err == nil {
+			return listener, h, nil
+		}
+		if time.Now().After(deadline) {
+			// The predecessor takes the port back when nobody answers on it.
+			return nil, nil, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// drain lets the requests in progress finish, for at most limit.
+func drain(server *http.Server, limit time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	_ = server.Shutdown(ctx)
 }
 
 func shutdown(server *http.Server) error {
@@ -219,6 +328,8 @@ type sessionSet struct {
 	attached bool
 	// closing: the daemon decided to stop and takes no more sessions.
 	closing bool
+	// frozen: the daemon handed over to a newer one, which owns the state on disk from now on, so this one saves and releases nothing.
+	frozen  bool
 	release func(project string)
 	dir     string
 	// lastUnplaced is when a request last came from a session the registry does not name; idleGrace keeps the daemon up that long after it.
@@ -328,7 +439,7 @@ func (s *sessionSet) optOut(session string) bool {
 
 // releaseIfUnused releases project once no opted-in session of it is left. The caller holds mu, which the attach endpoint takes too: a session that turns the project on again registers before it writes the settings, so a release can never remove settings a registered session still needs.
 func (s *sessionSet) releaseIfUnused(project string) {
-	if project == "" {
+	if project == "" || s.frozen {
 		return
 	}
 	for _, o := range s.optIns {
@@ -352,6 +463,10 @@ func (s *sessionSet) remove(pid int) {
 func (s *sessionSet) prune(alive func(int) bool, graceOver bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Handing over: the successor checks the sessions from now on, and this daemon must neither stop early nor cut the replies it drains.
+	if s.frozen {
+		return false
+	}
 	for pid := range s.pids {
 		if !alive(pid) {
 			s.drop(pid)
@@ -408,6 +523,65 @@ func (s *sessionSet) drop(pid int) {
 	}
 }
 
+// freeze hands the sessions over: from now on this daemon refuses attaches, opt-outs and detaches, which its successor answers once it listens, and changes nothing on disk. ok is false when the daemon is already closing or handing over.
+func (s *sessionSet) freeze() (h Handover, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing || s.frozen {
+		return Handover{}, false
+	}
+	s.frozen, s.closing = true, true
+	h = Handover{OptIns: map[string]*optIn{}}
+	for pid := range s.pids {
+		h.PIDs = append(h.PIDs, pid)
+	}
+	for session, o := range s.optIns {
+		h.OptIns[session] = &optIn{PID: o.PID, Project: o.Project}
+	}
+	for project := range s.projects {
+		h.Projects = append(h.Projects, project)
+	}
+	return h, true
+}
+
+// unfreeze takes the sessions back after a successor that never answered.
+func (s *sessionSet) unfreeze() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frozen, s.closing = false, false
+	s.save()
+}
+
+func (s *sessionSet) isFrozen() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.frozen
+}
+
+// adopt takes over the sessions a predecessor handed over, in place of whatever the disk holds. Windows it never met, which only send requests, count as unplaced, so they keep the daemon up for idleGrace as they did there.
+func (s *sessionSet) adopt(h *Handover, alive func(int) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.optIns, s.projects = map[string]*optIn{}, map[string]bool{}
+	for _, pid := range h.PIDs {
+		if alive(pid) && s.pids[pid] == nil {
+			s.pids[pid] = map[string]bool{}
+			s.attached = true
+		}
+	}
+	for session, o := range h.OptIns {
+		if o != nil && alive(o.PID) {
+			s.optIns[session] = o
+			s.attached = true
+		}
+	}
+	for _, project := range h.Projects {
+		s.projects[project] = true
+	}
+	s.lastUnplaced = time.Now()
+	s.save()
+}
+
 func optInsPath(dir string) string { return filepath.Join(dir, "opt-ins.json") }
 
 type savedSessions struct {
@@ -444,7 +618,7 @@ func (s *sessionSet) load(alive func(int) bool) {
 
 // save keeps the opt-ins and projects on disk. The caller holds mu.
 func (s *sessionSet) save() {
-	if s.dir == "" {
+	if s.dir == "" || s.frozen {
 		return
 	}
 	saved := savedSessions{OptIns: s.optIns}
@@ -537,22 +711,36 @@ func AttachSession(s State, session Session, spawn func() error) (tracked bool, 
 	return false, err
 }
 
-// OptOut takes a session off Gemini, so its next request passes through to Claude, and reports whether it was on Gemini. ok is false when no daemon answered.
+// OptOut takes a session off Gemini, so its next request passes through to Claude, and reports whether it was on Gemini. ok is false when no daemon answered. A daemon that just handed over answers 503, so it asks again, which reaches the successor.
 func OptOut(s State, session string) (wasOptedIn, ok bool) {
+	for attempt := 0; attempt < 3; attempt++ {
+		var retry bool
+		if wasOptedIn, ok, retry = optOutOnce(s, session); !retry {
+			return wasOptedIn, ok
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false, false
+}
+
+func optOutOnce(s State, session string) (wasOptedIn, ok, retry bool) {
 	body, _ := json.Marshal(map[string]string{"session": session})
 	req, _ := http.NewRequest(http.MethodPost, s.BaseURL()+optOutPath, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+s.Token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client(5 * time.Second).Do(req)
 	if err != nil {
-		return false, false
+		return false, false, takeoverInProgress(s.dir)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return false, false, true
+	}
 	var reply optOutReply
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&reply) != nil {
-		return false, false
+		return false, false, false
 	}
-	return reply.WasOptedIn, true
+	return reply.WasOptedIn, true, false
 }
 
 // Detach tells the daemon a session ended, so the projects only it used return to Claude at once rather than at the daemon's next check, which a session reopened right away would beat. A daemon that does not answer, or predates detaching, is left to that check.
@@ -596,7 +784,8 @@ func attachOnce(s State, request attachRequest, spawn func() error) (bool, error
 		if !answersWithin(s, portBusyWait) {
 			return false, &PortInUseError{Listen: s.Listen}
 		}
-	} else if !ok {
+	} else if !ok && !(takeoverInProgress(s.dir) && answersWithin(s, successorWait)) {
+		// While another NeoSwitch takes over, the port is free for a moment; its successor answers shortly, and a daemon started here would compete for the port.
 		if err := spawn(); err != nil {
 			return false, fmt.Errorf("start NeoSwitch daemon: %w", err)
 		}
