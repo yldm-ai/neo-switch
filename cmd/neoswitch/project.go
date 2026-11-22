@@ -491,7 +491,7 @@ func attach(args []string) error {
 	}
 	routed := base == state.BaseURL()
 	if !routed && !opted {
-		if legacyRoute(base) && !*quiet {
+		if legacyRoute(base, os.Getenv("ANTHROPIC_AUTH_TOKEN"), state) && !*quiet {
 			// Settings of a NeoSwitch from before TLS that no daemon serves any more: this session cannot answer, and the next one should not inherit them.
 			if project, err := projectDir(nil); err == nil {
 				_ = daemon.Disable(projectKey(project), state)
@@ -546,8 +546,9 @@ func attach(args []string) error {
 }
 
 // legacyRoute reports a base URL written by a NeoSwitch from before TLS.
-func legacyRoute(base string) bool {
-	return strings.HasPrefix(base, "http://127.0.0.1:")
+func legacyRoute(base, token string, s daemon.State) bool {
+	// Other local proxies, such as a company or account gateway on this computer, use the same form; only NeoSwitch's own route carries its token.
+	return strings.HasPrefix(base, "http://127.0.0.1:") && token != "" && token == s.Token
 }
 
 // sessionBlocked reports a setup problem found at session start, followed by the way back to Claude, because the session cannot answer until it is fixed.

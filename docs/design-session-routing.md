@@ -118,7 +118,7 @@ So the settings stay while an opted-in session of the project runs. What is kept
 - **Hooks** decide from the session's env, the project's settings file, or the opt-ins file, not from the env alone (a window that applied the settings later may not show them to a hook).
 - **One model per daemon.** The daemon answers every switched session with the model it started with, and reports it; `/neoswitch:on` checks the account offers that model, not the session's own `GEMINI_MODEL`, and says when the two differ.
 - **The daemon starts without a model backend**: sessions passing through to Claude need it whatever happened on the model side.
-- **Upgrade.** A state from before TLS moves to TLS on a new port, keeping its token, so a daemon of the earlier version can serve its sessions until they end; `Disable` also removes the earlier plain-HTTP entries.
+- **Upgrade.** A state from before TLS moves to TLS on a new port, keeping its token, so a daemon of the earlier version can serve its sessions until they end; `Disable` also removes the earlier plain-HTTP entries. A session counts as routed the earlier way only when it also carries NeoSwitch's token: other local proxies, `neoswitch claude` and `neoswitch serve` name plain-HTTP loopback addresses too, and their sessions must neither start NeoSwitch nor be told they cannot answer.
 
 Open, with reopen conditions:
 - ~~Requests of subagents may carry another session id~~: a Task subagent sends its parent's id, also in the background (F13). Reopen when a Claude Code release adds a request kind that runs under its own session id; the probe is a recording passthrough at `ANTHROPIC_BASE_URL` comparing `x-claude-code-session-id` across requests.
