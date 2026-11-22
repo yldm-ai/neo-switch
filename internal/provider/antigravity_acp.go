@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -19,12 +21,13 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"google.golang.org/genai"
 
+	"github.com/yldm-ai/neo-switch/internal/daemon"
 	"github.com/yldm-ai/neo-switch/internal/translate"
 )
 
 // AntigravityACP uses the official agy ACP server as the upstream model session. It never reads Antigravity credentials: agy resolves its own OAuth profile from the platform keyring.
 //
-// One agy process serves every request. Each request gets its own ACP session, and agy runs sessions concurrently, so parallel Claude Code requests (subagents, background calls, several sessions sharing the daemon) do not queue behind each other.
+// One agy process serves every request. agy runs sessions concurrently, so parallel Claude Code requests (subagents, background calls, several sessions sharing the daemon) do not queue behind each other. A request continues the session that holds its conversation when there is one, and otherwise gets a new session (see acp_session.go).
 type AntigravityACP struct {
 	path  string
 	agent string
@@ -33,6 +36,9 @@ type AntigravityACP struct {
 
 	mu   sync.Mutex
 	conn *acpConn
+
+	// unguarded is set for good once agy ran a tool without the tool guard (acp_guard.go): every later request is refused.
+	unguarded atomic.Bool
 
 	// promptOverhead is how many input tokens agy adds around every prompt (its own agent instructions, about 14k for bare-llm), learned from the usage of earlier answers. ACP reports usage only after an answer, so estimates made before one need it.
 	promptOverhead atomic.Int64
@@ -86,14 +92,12 @@ func NewAntigravityACPFromEnv(ctx context.Context) (*AntigravityACP, error) {
 	if agent == "" {
 		agent = "bare-llm"
 	}
-	cwd := strings.TrimSpace(os.Getenv("CLAUDE_PROJECT_DIR"))
-	if cwd == "" {
-		cwd, err = os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("locate Antigravity ACP workspace: %w", err)
-		}
+	// agy runs in a folder of NeoSwitch's own, never the user's project: see acp_guard.go.
+	stateDir, err := daemon.Dir()
+	if err != nil {
+		return nil, fmt.Errorf("locate Antigravity ACP workspace: %w", err)
 	}
-	cwd, err = filepath.Abs(cwd)
+	cwd, err := filepath.Abs(AntigravityWorkspace(stateDir))
 	if err != nil {
 		return nil, fmt.Errorf("locate Antigravity ACP workspace: %w", err)
 	}
@@ -189,18 +193,19 @@ func (a *AntigravityACP) Close() error {
 	return err
 }
 
-// Generate runs one prompt and returns the complete answer.
+// Generate runs one request and returns the complete answer.
 func (a *AntigravityACP) Generate(ctx context.Context, req translate.Request) (*genai.GenerateContentResponse, error) {
 	var raw strings.Builder
-	result, err := a.run(ctx, req, func(text string) { raw.WriteString(text) })
+	x, err := a.run(ctx, req, func(text string) { raw.WriteString(text) })
 	if err != nil {
 		return nil, err
 	}
-	parts, err := acpAnswerParts(raw.String(), result)
+	parts, exact, err := acpAnswerParts(raw.String(), x.result)
+	x.end(parts, exact && err == nil)
 	if err != nil {
 		return nil, err
 	}
-	resp := acpFinalResponse(parts, result)
+	resp := acpFinalResponse(parts, x.result)
 	if resp.UsageMetadata == nil {
 		estimate, _ := a.CountTokens(ctx, req)
 		resp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: int32(estimate)}
@@ -208,7 +213,7 @@ func (a *AntigravityACP) Generate(ctx context.Context, req translate.Request) (*
 	return resp, nil
 }
 
-// Stream relays the answer while agy generates it. Text answers are decoded out of the {"text": ...} envelope incrementally; tool calls are delivered whole in the final chunk, which also carries the finish reason and usage.
+// Stream relays the answer while agy generates it. Text answers are decoded out of the {"text": ...} envelope incrementally; tool calls are delivered whole in the final chunk, which also carries the finish reason and usage. The session is kept for the conversation's next request only once Claude Code has taken that final chunk.
 //
 // ACP reports usage only when the prompt ends, but Claude Code sizes its context from the input tokens in message_start, which the first chunk becomes. That chunk therefore carries the prompt-size estimate; the final chunk carries agy's exact count.
 func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter.Seq2[*genai.GenerateContentResponse, error] {
@@ -217,16 +222,33 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 		firstUsage := &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: int32(estimate)}
 		// Ending the iteration early (Claude Code disconnected) cancels the prompt in agy.
 		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
 		queue := newChunkQueue()
 		type outcome struct {
-			result acp.PromptResponse
-			err    error
+			x   *acpExchange
+			err error
 		}
 		done := make(chan outcome, 1)
 		go func() {
-			result, err := a.run(ctx, req, queue.push)
-			done <- outcome{result, err}
+			x, err := a.run(ctx, req, queue.push)
+			done <- outcome{x, err}
+		}()
+		var (
+			received bool
+			x        *acpExchange
+		)
+		defer func() {
+			cancel()
+			switch {
+			case !received:
+				// The request is still running; its session is closed once it ends.
+				go func() {
+					if out := <-done; out.x != nil {
+						out.x.end(nil, false)
+					}
+				}()
+			case x != nil:
+				x.end(nil, false)
+			}
 		}()
 		var decoder envelopeDecoder
 		relay := func() bool {
@@ -249,6 +271,7 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 					return
 				}
 			case out := <-done:
+				received, x = true, out.x
 				// Every chunk is queued before the prompt returns, so draining here loses nothing.
 				if !relay() {
 					return
@@ -257,17 +280,19 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 					yield(nil, out.err)
 					return
 				}
-				parts, err := decoder.finish(out.result)
+				parts, err := decoder.finish(x.result)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
-				final := acpFinalResponse(parts, out.result)
+				final := acpFinalResponse(parts, x.result)
 				if final.UsageMetadata == nil {
 					// No streamed chunk and no usage from agy: keep the estimate rather than report zero.
 					final.UsageMetadata = firstUsage
 				}
-				yield(final, nil)
+				delivered := yield(final, nil)
+				x.end(decoder.answer, decoder.exact && delivered)
+				x = nil
 				return
 			}
 		}
@@ -284,69 +309,172 @@ func promptTextTokens(req translate.Request) int {
 	return len([]rune(text)) / 4
 }
 
-// run sends the request as a prompt in a fresh ACP session and passes each answer chunk to onText as it arrives. The session is closed afterwards; when ctx ends first, the prompt is cancelled in agy.
-func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText func(string)) (acp.PromptResponse, error) {
+// run sends the request to agy and passes each chunk of the answer to onText as it arrives. It continues the session holding the request's conversation when there is one, and otherwise opens a new session that reads the whole conversation, in several prompts when it is too long for one. The caller ends the returned exchange; when run fails, it has already closed the session and released agy. When ctx ends first, the prompt is cancelled in agy.
+func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText func(string)) (*acpExchange, error) {
+	if a.unguarded.Load() {
+		return nil, unguardedError
+	}
 	c, err := a.connection(ctx)
 	if err != nil {
-		return acp.PromptResponse{}, err
+		return nil, err
 	}
-	defer c.release()
-	session, err := c.conn.NewSession(ctx, acp.NewSessionRequest{Cwd: a.cwd, McpServers: []acp.McpServer{}})
-	if err != nil {
-		return acp.PromptResponse{}, a.requestError(ctx, c, "create Antigravity ACP session", err)
-	}
-	if session.SessionId == "" {
-		return acp.PromptResponse{}, errors.New("Antigravity ACP returned no session ID")
-	}
-	sid := session.SessionId
-	defer func() {
-		// Close with a context of its own so a cancelled request still releases its session.
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), acpCloseTimeout)
-		defer cancel()
-		_, _ = c.conn.CloseSession(closeCtx, acp.CloseSessionRequest{SessionId: sid})
-	}()
-	// agy offers each account the models of its plan. A model outside them fails every request alike, so it is reported as unavailable, which Claude Code shows as it is, rather than as an error worth retrying.
-	if offered := modelIDs(session.ConfigOptions); len(offered) > 0 && !slices.Contains(offered, a.model) {
-		return acp.PromptResponse{}, &translate.UnavailableError{Message: ModelNotOfferedMessage(a.model, offered) + " Run /neoswitch:off and start a new session to go back to Claude."}
-	}
-	if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
-		SessionId: sid, ConfigId: acpModel, Value: acp.SessionConfigValueId(a.model),
-	}}); err != nil {
-		return acp.PromptResponse{}, a.requestError(ctx, c, "select Antigravity model "+a.model, err)
-	}
-	// Claude Code's effort picks agy's thought level, which dominates time to first token. It is only a speed and depth hint, so it is skipped when this agy does not offer the level rather than failing the request.
-	if level := acp.SessionConfigValueId(strings.ToLower(string(req.ThinkingLevel))); level != "" && offersConfigValue(session.ConfigOptions, acpThoughtLevel, level) {
-		if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
-			SessionId: sid, ConfigId: acpThoughtLevel, Value: level,
-		}}); err != nil {
-			return acp.PromptResponse{}, a.requestError(ctx, c, "select Antigravity thought level "+string(level), err)
+	x := &acpExchange{c: c, contents: req.Contents}
+	x.role, x.owner = originRole(req.Origin)
+	keys := historyKeys(req.Contents)
+	pieces, continued := a.continuation(x, req, keys)
+	fresh := x.session == nil
+	if fresh {
+		if x.session, err = a.newSession(ctx, c); err != nil {
+			c.release()
+			return nil, err
+		}
+		pieces = a.freshPieces(x.session, req, c.imagePrompts)
+		if x.role == roleOther && len(req.Contents) > 0 {
+			x.branch = keys[len(req.Contents)-1]
 		}
 	}
-	c.subscribe(sid, func(update acp.SessionUpdate) {
+	prompts := acpPrompts(pieces, continued)
+	if len(prompts) > 1 {
+		size := 0
+		for _, prompt := range prompts {
+			size += len(prompt.text)
+		}
+		acpLogger.Warn("Antigravity conversation sent in several prompts, as it is too long for one", "prompts", len(prompts), "bytes", size, "new_session", fresh, "class", req.Origin.Class, "kind", req.Origin.Kind)
+	}
+	for i, prompt := range prompts {
+		sink := func(string) {}
+		if i == len(prompts)-1 {
+			sink = onText
+		}
+		if x.result, err = a.prompt(ctx, c, x.session, prompt, acp.SessionConfigValueId(strings.ToLower(string(req.ThinkingLevel))), answerText(sink)); err != nil {
+			c.closeSessions([]*acpSession{x.session})
+			c.release()
+			return nil, err
+		}
+	}
+	// Learn only from a new session read in one prompt without images: image tokens are not part of the text estimate, and a continued session holds more than this request's text.
+	if fresh && len(prompts) == 1 && len(prompts[0].images) == 0 && x.result.Usage != nil {
+		if overhead := promptTokens(x.result.Usage) - int64(promptTextTokens(req)); overhead > 0 {
+			a.promptOverhead.Store(overhead)
+		}
+	}
+	return x, nil
+}
+
+// acpContinued opens the prompt of a session that already holds the conversation.
+const acpContinued = "The conversation so far is in the previous messages of this session; this message adds what is new since your last answer.\n\n"
+
+// acpBranchContinued opens the prompt of a background session that answered an earlier background request of Claude Code's.
+const acpBranchContinued = "Your last exchange in this session was a separate background request from Claude Code, not part of the conversation; disregard it and what it asked for. The conversation continues below from where it was before that request, followed by a new request.\n\n"
+
+// continuation claims the idle session the request may continue (see acp_session.go), given the request's historyKeys, and returns what that session has not read yet: the system instructions and tool definitions when they changed, and the messages it does not hold. It leaves x.session nil when there is none.
+func (a *AntigravityACP) continuation(x *acpExchange, req translate.Request, keys []string) ([]acpPiece, string) {
+	n := len(req.Contents)
+	if n < 2 || req.Contents[n-1] == nil || req.Contents[n-1].Role != genai.RoleUser {
+		return nil, ""
+	}
+	s, from := x.c.claim(keys, x.role, x.owner)
+	if s == nil {
+		return nil, ""
+	}
+	x.session = s
+	continued := acpContinued
+	if from < n-1 {
+		continued = acpBranchContinued
+		x.branch = keys[n-1]
+	}
+	r := &promptRenderer{acceptImages: x.c.imagePrompts}
+	system, tools := r.context(req)
+	systemKey, toolsKey := textKey(system), textKey(tools)
+	if systemKey == s.system {
+		system = ""
+	}
+	if toolsKey == s.tools {
+		tools = ""
+	}
+	s.system, s.tools = systemKey, toolsKey
+	pieces := contextPieces(system, tools, true)
+	for _, content := range req.Contents[from:] {
+		pieces = append(pieces, r.entry(content))
+	}
+	return pieces, continued
+}
+
+// freshPieces renders the whole request for a new session and records what the session reads.
+func (a *AntigravityACP) freshPieces(s *acpSession, req translate.Request, acceptImages bool) []acpPiece {
+	system, tools := (&promptRenderer{acceptImages: acceptImages}).context(req)
+	s.system, s.tools = textKey(system), textKey(tools)
+	return conversationPieces(req, acceptImages)
+}
+
+// newSession opens a session answering with the configured model.
+func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn) (*acpSession, error) {
+	session, err := c.conn.NewSession(ctx, acp.NewSessionRequest{Cwd: a.cwd, McpServers: []acp.McpServer{}})
+	if err != nil {
+		return nil, a.requestError(ctx, c, "create Antigravity ACP session", err)
+	}
+	if session.SessionId == "" {
+		return nil, errors.New("Antigravity ACP returned no session ID")
+	}
+	s := &acpSession{id: session.SessionId, options: session.ConfigOptions}
+	// agy offers each account the models of its plan. A model outside them fails every request alike, so it is reported as unavailable, which Claude Code shows as it is, rather than as an error worth retrying.
+	if offered := modelIDs(session.ConfigOptions); len(offered) > 0 && !slices.Contains(offered, a.model) {
+		c.closeSessions([]*acpSession{s})
+		return nil, &translate.UnavailableError{Message: ModelNotOfferedMessage(a.model, offered) + " Run /neoswitch:off to continue this session on Claude."}
+	}
+	if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
+		SessionId: s.id, ConfigId: acpModel, Value: acp.SessionConfigValueId(a.model),
+	}}); err != nil {
+		c.closeSessions([]*acpSession{s})
+		return nil, a.requestError(ctx, c, "select Antigravity model "+a.model, err)
+	}
+	return s, nil
+}
+
+// answerText passes the text of agy's answer to onText.
+func answerText(onText func(string)) func(acp.SessionUpdate) {
+	return func(update acp.SessionUpdate) {
 		if chunk := update.AgentMessageChunk; chunk != nil && chunk.Content.Text != nil {
 			onText(chunk.Content.Text.Text)
 		}
+	}
+}
+
+// prompt sends one prompt to the session and passes the session's updates to onUpdate, which runs on the SDK's notification goroutine and must not block.
+func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, prompt acpPiece, level acp.SessionConfigValueId, onUpdate func(acp.SessionUpdate)) (acp.PromptResponse, error) {
+	// Claude Code's effort picks agy's thought level, which dominates time to first token. It is only a speed and depth hint, so it is skipped when this agy does not offer the level rather than failing the request.
+	if level != "" && level != s.level && offersConfigValue(s.options, acpThoughtLevel, level) {
+		if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
+			SessionId: s.id, ConfigId: acpThoughtLevel, Value: level,
+		}}); err != nil {
+			return acp.PromptResponse{}, a.requestError(ctx, c, "select Antigravity thought level "+string(level), err)
+		}
+		s.level = level
+	}
+	c.subscribe(s.id, func(update acp.SessionUpdate) {
+		if call := update.ToolCall; call != nil {
+			s.sawToolCall(call.ToolCallId)
+		}
+		onUpdate(update)
 	})
-	defer c.unsubscribe(sid)
-	text, images := acpPrompt(req, c.imagePrompts)
-	blocks := append([]acp.ContentBlock{acp.TextBlock(text)}, images...)
-	result, err := c.conn.Prompt(ctx, acp.PromptRequest{SessionId: sid, Prompt: blocks})
+	defer c.unsubscribe(s.id)
+	blocks := append([]acp.ContentBlock{acp.TextBlock(prompt.text)}, prompt.images...)
+	result, err := c.conn.Prompt(ctx, acp.PromptRequest{SessionId: s.id, Prompt: blocks})
+	if err == nil && result.StopReason != acp.StopReasonCancelled {
+		if guardErr := a.checkGuard(c, s); guardErr != nil {
+			return acp.PromptResponse{}, guardErr
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), acpCloseTimeout)
-			_ = c.conn.Cancel(cancelCtx, acp.CancelNotification{SessionId: sid})
+			_ = c.conn.Cancel(cancelCtx, acp.CancelNotification{SessionId: s.id})
 			cancel()
 		}
 		return acp.PromptResponse{}, a.requestError(ctx, c, "Antigravity ACP prompt", err)
 	}
 	if result.StopReason == acp.StopReasonCancelled {
 		return acp.PromptResponse{}, errors.New("Antigravity ACP cancelled the prompt")
-	}
-	// Learn only from text-only prompts: image tokens are not part of the text estimate and would inflate the overhead.
-	if result.Usage != nil && len(images) == 0 {
-		if overhead := result.Usage.InputTokens - int64(promptTextTokens(req)); overhead > 0 {
-			a.promptOverhead.Store(overhead)
-		}
 	}
 	return result, nil
 }
@@ -374,14 +502,107 @@ func (a *AntigravityACP) requestError(ctx context.Context, c *acpConn, action st
 		return a.signedOut(fmt.Errorf("%s: %w", action, err))
 	}
 	acpLogger.Warn("Antigravity request failed", "action", action, "error", err)
-	return &translate.UpstreamError{Reason: "Antigravity could not answer this request. Try again; if it keeps failing, run /neoswitch:login to sign in again."}
+	if errors.As(err, &rpcErr) {
+		if classified := a.agyRefusal(rpcErr); classified != nil {
+			return classified
+		}
+	}
+	return &translate.UpstreamError{Reason: "Antigravity could not answer this request. Try again; if it keeps failing, run /neoswitch:status, or run /neoswitch:off to continue this session on Claude."}
+}
+
+// agy reports why Google refused a request in the text of its JSON-RPC error. These patterns sort the reasons Claude Code must handle differently: a used-up quota, which retrying cannot fix; a rate limit, which passes; a conversation too long for the model, which compaction fixes.
+var (
+	agyQuotaPattern     = regexp.MustCompile(`(?i)exhausted your quota|quota (?:has been |was )?exceeded|exceeded your (?:current )?quota|out of credits|usage limit reached|insufficient credits`)
+	agyRateLimitPattern = regexp.MustCompile(`(?i)resource[_ ]exhausted|rate[ _-]?limit|too many requests|\b429\b`)
+	agyTooLongPattern   = regexp.MustCompile(`(?i)prompt is too long|too many tokens|context (?:window|length)|input token count .*exceeds|exceeds the maximum`)
+)
+
+// agyRefusal turns an agy error that says why Google refused the request into the error Claude Code should show, or returns nil. The reason is quoted in agy's own words, which can name when a quota resets; it is taken from the error message, or from a string in its data, never the JSON itself.
+func (a *AntigravityACP) agyRefusal(rpcErr *acp.RequestError) error {
+	reasons := append([]string{rpcErr.Message}, jsonStrings(rpcErr.Data)...)
+	find := func(pattern *regexp.Regexp) string {
+		for _, reason := range reasons {
+			if pattern.MatchString(reason) {
+				return shorten(strings.TrimSpace(reason), 300)
+			}
+		}
+		return ""
+	}
+	if reason := find(agyQuotaPattern); reason != "" {
+		return &translate.UnavailableError{Message: fmt.Sprintf("Your Google account has used up its Antigravity quota for %s. Antigravity said: %q. Wait until the quota resets, or run /neoswitch:off to continue this session on Claude.", a.model, reason)}
+	}
+	if reason := find(agyTooLongPattern); reason != "" {
+		return &translate.UnavailableError{Message: fmt.Sprintf("prompt is too long: Antigravity said: %q. Run /compact to shorten the conversation.", reason)}
+	}
+	if reason := find(agyRateLimitPattern); reason != "" {
+		return &translate.RateLimitError{Message: fmt.Sprintf("Antigravity is limiting how many requests your Google account can send. Antigravity said: %q. Wait a minute and try again, or run /neoswitch:off to continue this session on Claude.", reason)}
+	}
+	return nil
+}
+
+// jsonStrings returns the string values in a JSON document, in order.
+func jsonStrings(raw json.RawMessage) []string {
+	var value any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case string:
+			out = append(out, v)
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		case map[string]any:
+			keys := make([]string, 0, len(v))
+			for key := range v {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys)
+			for _, key := range keys {
+				walk(v[key])
+			}
+		}
+	}
+	walk(value)
+	return out
+}
+
+// shorten cuts s to at most n characters, marking the cut.
+func shorten(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
+}
+
+// unguardedError is what every request gets once agy ran a tool without the tool guard.
+var unguardedError = &translate.UnavailableError{Message: "NeoSwitch stopped using Antigravity in this session: Antigravity ran one of its own tools without going through NeoSwitch's tool guard, which keeps every tool in Claude Code under its permission rules. Update the NeoSwitch plugin, or run /neoswitch:off to continue this session on Claude."}
+
+// checkGuard compares the tool calls agy reported for a session with the decisions the tool guard recorded for it. Fewer decisions mean agy ran a tool without asking the guard; the Antigravity route then stops for the rest of the daemon's life, as it can no longer keep tools in Claude Code.
+func (a *AntigravityACP) checkGuard(c *acpConn, s *acpSession) error {
+	calls := s.toolCallCount()
+	if calls == 0 {
+		return nil
+	}
+	if decisions := guardDecisions(c.workspace, string(s.id)); decisions < calls {
+		a.unguarded.Store(true)
+		acpLogger.Error("Antigravity ran a tool without NeoSwitch's tool guard; the Antigravity route is stopped", "error", errUnguarded, "tool_calls", calls, "decisions", decisions, "workspace", c.workspace)
+		a.discard(c)
+		return unguardedError
+	}
+	return nil
 }
 
 // acpUnavailableMessage is what Claude Code shows when agy cannot serve any request: it did not start, did not finish the handshake, exited, or asks for a sign-in.
-const acpUnavailableMessage = "NeoSwitch could not start Google's Antigravity command-line tool (agy). Run /neoswitch:login, which installs or repairs it, or run /neoswitch:off and start a new session to go back to Claude."
+const acpUnavailableMessage = "NeoSwitch could not start Google's Antigravity command-line tool (agy). Run /neoswitch:login, which installs or repairs it, or run /neoswitch:off to continue this session on Claude."
 
 // acpRetryMessage is shown only when every retry of a transient agy failure failed.
-const acpRetryMessage = "Google's Antigravity command-line tool (agy) stopped or did not start in time, and NeoSwitch could not get it answering again. Try again in a moment; if it keeps happening, run /neoswitch:status, or run /neoswitch:off and start a new session to go back to Claude."
+const acpRetryMessage = "Google's Antigravity command-line tool (agy) stopped or did not start in time, and NeoSwitch could not get it answering again. Try again in a moment; if it keeps happening, run /neoswitch:status, or run /neoswitch:off to continue this session on Claude."
 
 // unavailable logs the cause, which can hold raw JSON-RPC text, and returns the plain error the proxy reports. While a sign-in by code waits, the message gives its link and the step that finishes it.
 // retryable reports an agy failure the next request is likely to fix: agy crashed, or its handshake timed out on a cold start. Claude Code retries it; answering it as unavailable would stop the session on a hiccup.
@@ -530,7 +751,9 @@ var acpLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 
 // acpConn is one running `agy acp` process and the client side of its ACP connection.
 type acpConn struct {
-	cmd          *exec.Cmd
+	cmd *exec.Cmd
+	// workspace is the folder agy runs in, which holds the tool guard's records.
+	workspace    string
 	conn         *acp.ClientSideConnection
 	imagePrompts bool
 
@@ -538,6 +761,8 @@ type acpConn struct {
 
 	mu    sync.Mutex
 	sinks map[acp.SessionId]func(acp.SessionUpdate)
+	// idle holds answered sessions waiting for the next request of their conversation.
+	idle []*acpSession
 	// active counts the requests using the connection; a retired one closes when the last of them ends.
 	active  int
 	retired bool
@@ -563,6 +788,12 @@ func acpEnv(environ []string) []string {
 }
 
 func startACP(path, agent, cwd string) (*acpConn, error) {
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		return nil, fmt.Errorf("prepare the Antigravity workspace: %w", err)
+	}
+	if err := installToolGuard(cwd); err != nil {
+		return nil, fmt.Errorf("install the Antigravity tool guard: %w", err)
+	}
 	// No --dangerously-skip-permissions: agy's own tools must ask through RequestPermission, which always refuses. Tools run only in Claude Code, under its permission rules.
 	cmd := exec.Command(path, "acp", "--agent", agent)
 	cmd.Dir = cwd
@@ -579,7 +810,7 @@ func startACP(path, agent, cwd string) (*acpConn, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start Antigravity ACP: %w", err)
 	}
-	c := &acpConn{cmd: cmd, started: time.Now(), sinks: map[acp.SessionId]func(acp.SessionUpdate){}}
+	c := &acpConn{cmd: cmd, workspace: cwd, started: time.Now(), sinks: map[acp.SessionId]func(acp.SessionUpdate){}}
 	c.conn = acp.NewClientSideConnection(c, stdin, stdout)
 	c.conn.SetLogger(acpLogger)
 	return c, nil

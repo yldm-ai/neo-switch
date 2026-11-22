@@ -65,7 +65,7 @@
   "row_tokens": "Token-Verbrauch, <code>count_tokens</code>",
   "tokens_api": "Gemeldet; bei der Developer API geschätzt",
   "tokens_acp": "Gemeldet, inkl. ca. 14k Tokens an <code>agy</code>-Anweisungen",
-  "compat_note": "Auf keinem der beiden Wege unterstützt: Server-Tools wie Websuche und Codeausführung, Bild- und Dokumentquellen per URL sowie Claude-Thinking-Blöcke. Der vollständige Vertrag steht in <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>.",
+  "compat_note": "Auf keinem der beiden Wege unterstützt: Server-Tools wie Codeausführung, Bild- und Dokumentquellen per URL sowie Claude-Thinking-Blöcke. Die WebSearch von Claude Code funktioniert mit der Google-Anmeldung (Antigravity), die mit Google sucht, nicht aber mit einem Gemini-API-Schlüssel. Der vollständige Vertrag steht in <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>.",
   "cmds_title": "Plugin-Befehle",
   "cmds_sub": "Routing-Änderungen gelten für neue Sitzungen; die laufende Sitzung behält ihre Verbindung.",
   "cmd_login": "Mit Antigravity OAuth anmelden und die Route dieses Projekts aktivieren",

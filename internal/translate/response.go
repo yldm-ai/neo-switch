@@ -32,6 +32,13 @@ type RetryableError struct {
 
 func (e *RetryableError) Error() string { return e.Message }
 
+// RateLimitError means the upstream is limiting how fast requests may come, for a short while. The server answers 429, which Claude Code retries with backoff; Message is shown only if every retry fails.
+type RateLimitError struct {
+	Message string
+}
+
+func (e *RateLimitError) Error() string { return e.Message }
+
 // UnsupportedError is a request feature NeoSwitch cannot carry to the model. Message is a complete sentence for the user; the server reports it without the request field path the error is wrapped in.
 type UnsupportedError struct {
 	Message string

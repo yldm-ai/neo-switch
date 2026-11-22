@@ -65,7 +65,7 @@
   "row_tokens": "Token usage, <code>count_tokens</code>",
   "tokens_api": "Reported; estimated on the Developer API",
   "tokens_acp": "Reported, incl. ~14k tokens of <code>agy</code> instructions",
-  "compat_note": "Not supported on either path: server tools such as web search and code execution, URL image and document sources, and Claude thinking blocks. Full contract in <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>.",
+  "compat_note": "Not supported on either path: server tools such as code execution, URL image and document sources, and Claude thinking blocks. Claude Code's WebSearch works when you sign in with Google (Antigravity), which searches with Google; it does not work with a Gemini API key. Full contract in <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>.",
   "cmds_title": "Plugin commands",
   "cmds_sub": "Routing changes apply to new sessions; the current session keeps its connection.",
   "cmd_login": "Sign in with Antigravity OAuth and enable this project's route",

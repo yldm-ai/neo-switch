@@ -58,6 +58,10 @@ func TestEnableAndDisablePreserveOtherSettings(t *testing.T) {
 	if _, present := env[EnvUseGateway]; present {
 		t.Fatalf("enable must leave Claude Code gateway mode alone: %s", data)
 	}
+	// The Antigravity route tells the main thread from background requests by Claude Code's hint headers.
+	if env[envHintHeaders] != hintHeadersOn {
+		t.Fatalf("enable must turn on Claude Code's hint headers: %s", data)
+	}
 
 	if err := Disable(project, s); err != nil {
 		t.Fatal(err)
@@ -68,6 +72,30 @@ func TestEnableAndDisablePreserveOtherSettings(t *testing.T) {
 	env = settings["env"].(map[string]any)
 	if len(env) != 1 || env["FOO"] != "bar" || settings["permissions"] == nil {
 		t.Fatalf("settings after disable = %s", data)
+	}
+}
+
+// A hint header setting the user chose stays as it was, through enable and disable.
+func TestEnableKeepsTheUsersHintHeaderSetting(t *testing.T) {
+	project := t.TempDir()
+	s := testState(t)
+	path := settingsPath(project)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	_ = os.WriteFile(path, []byte(`{"env":{"`+envHintHeaders+`":"0"}}`), 0o644)
+	if err := Enable(project, s, Route{Bundle: BundlePath(s.dir)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Disable(project, s); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != `{
+  "env": {
+    "`+envHintHeaders+`": "0"
+  }
+}
+` {
+		t.Fatalf("settings = %s", data)
 	}
 }
 

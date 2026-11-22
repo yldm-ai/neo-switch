@@ -132,6 +132,25 @@ func TestMessagesJSON(t *testing.T) {
 	}
 }
 
+// The Antigravity route keeps a session per sender, so the request carries who in Claude Code sent it.
+func TestRequestCarriesClaudeCodeHintHeaders(t *testing.T) {
+	backend := &fakeBackend{response: &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{Content: genai.NewContentFromText("hello", genai.RoleModel), FinishReason: genai.FinishReasonStop}},
+	}}
+	rec := post(t, NewHandler(Config{Token: "secret", Backend: backend}), "/v1/messages", textRequest,
+		"X-Claude-Code-Session-Id", "s1",
+		"X-Claude-Code-Request-Class", "auxiliary",
+		"X-Claude-1p-Request-Class", "followup-generation",
+		"X-Claude-Code-Agent-Id", "a1",
+		"Authorization", "Bearer secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if want := (translate.Origin{Session: "s1", Class: "auxiliary", Kind: "followup-generation", Agent: "a1"}); backend.got.Origin != want {
+		t.Fatalf("origin %+v, want %+v", backend.got.Origin, want)
+	}
+}
+
 func TestStreamMergesTextAndEmitsWholeToolCalls(t *testing.T) {
 	backend := &fakeBackend{chunks: []*genai.GenerateContentResponse{
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{{Text: "thinking...", Thought: true}, {Text: "Hel"}}}}},
@@ -219,6 +238,7 @@ func TestUpstreamStatusMapping(t *testing.T) {
 		{errors.New("dial tcp: refused"), 502, "api_error", "refused"},
 		{fmt.Errorf("start: %w", &translate.UnavailableError{Message: "Run /neoswitch:login to sign in again."}), 400, "invalid_request_error", "Run /neoswitch:login to sign in again."},
 		{fmt.Errorf("prompt: %w", &translate.RetryableError{Message: "agy restarted"}), 529, "overloaded_error", "agy restarted"},
+		{fmt.Errorf("prompt: %w", &translate.RateLimitError{Message: "slow down"}), 429, "rate_limit_error", "slow down"},
 	} {
 		status, typ, message := upstreamStatus(tc.err)
 		if status != tc.status || typ != tc.typ || !strings.Contains(message, tc.message) {
