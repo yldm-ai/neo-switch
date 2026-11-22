@@ -160,6 +160,10 @@ func tools(in []anthropic.Tool) ([]*genai.Tool, error) {
 	}
 	declarations := make([]*genai.FunctionDeclaration, 0, len(in))
 	for i, tool := range in {
+		if strings.HasPrefix(tool.Type, "advisor_") {
+			// The advisor tool only offers the model an optional second opinion from another Claude model. Leaving it out keeps every request answerable; the routed model simply never consults an advisor.
+			continue
+		}
 		if tool.Type != "" && tool.Type != "custom" {
 			return nil, fmt.Errorf("tools[%d]: %w", i, unsupportedServerTool(tool.Type))
 		}
@@ -176,6 +180,9 @@ func tools(in []anthropic.Tool) ([]*genai.Tool, error) {
 			declaration.ParametersJsonSchema = schema
 		}
 		declarations = append(declarations, declaration)
+	}
+	if len(declarations) == 0 {
+		return nil, nil
 	}
 	// All functions go in one Tool: the Gemini API documents function declarations as a list inside a single tool entry.
 	return []*genai.Tool{{FunctionDeclarations: declarations}}, nil
@@ -238,6 +245,14 @@ func blockToParts(block anthropic.ContentBlock, role string, calls map[string]to
 	case "thinking", "redacted_thinking":
 		// Claude's reasoning is signed for Anthropic and has no Gemini representation. It appears in history only when a session started on Claude is resumed here.
 		return nil, nil
+	case "advisor_tool_result":
+		// Advisor consultations run on Anthropic's servers and show up in history only when a session started on Claude is resumed here. The routed model never had the advisor tool, so the exchange is dropped like Claude's thinking.
+		return nil, nil
+	case "server_tool_use":
+		if block.Name == "advisor" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("content block type %q is not supported", block.Type)
 	case "image", "document":
 		part, err := mediaPart(block)
 		if err != nil {
