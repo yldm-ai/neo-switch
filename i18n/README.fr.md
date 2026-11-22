@@ -96,10 +96,9 @@ La connexion Google est conservée par `agy`, pas par NeoSwitch, et reste en pla
 
 ## Ce que NeoSwitch modifie
 
-Tant qu'une session d'un projet utilise Gemini 4 Neon, NeoSwitch ajoute quatre entrées à l'objet `env` du `.claude/settings.local.json` de ce projet, et les retire dès qu'aucune session n'y utilise plus NeoSwitch :
+Tant qu'une session d'un projet utilise Gemini 4 Neon, NeoSwitch ajoute trois entrées à l'objet `env` du `.claude/settings.local.json` de ce projet, et les retire dès qu'aucune session n'y utilise plus NeoSwitch :
 
 - `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` et `NODE_EXTRA_CA_CERTS` envoient les requêtes Claude Code du projet à NeoSwitch sur cet ordinateur, par une connexion chiffrée à laquelle seul NeoSwitch peut répondre. NeoSwitch répond avec Gemini 4 Neon aux sessions que vous avez basculées et transmet toute autre requête à Claude sans la modifier, avec votre propre connexion Claude, qu'il ne conserve ni ne journalise. L'en-tête contient une clé qui n'ouvre que NeoSwitch sur cet ordinateur.
-- `CLAUDE_CODE_USE_GATEWAY=0` fait parler ces sessions directement à NeoSwitch. Certains outils qui lancent Claude Code via une autre passerelle activent le mode passerelle, et Claude Code ignorerait alors NeoSwitch.
 
 Dans un projet Git, NeoSwitch ajoute aussi `.claude/settings.local.json` à la liste d'exclusion propre au clone (`.git/info/exclude`), pour que le jeton reste hors des commits ; votre `.gitignore` n'est pas modifié.
 

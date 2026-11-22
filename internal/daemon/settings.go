@@ -17,7 +17,7 @@ const (
 	envHeaders = "ANTHROPIC_CUSTOM_HEADERS"
 	// envExtraCAs makes the session trust NeoSwitch's local CA, so it can reach the daemon over TLS.
 	envExtraCAs = "NODE_EXTRA_CA_CERTS"
-	// EnvUseGateway is Claude Code's gateway mode switch, set by gateway launchers such as `everyapi use claude`. In gateway mode a session takes ANTHROPIC_BASE_URL from its process environment over project settings, so the proxy entries alone would be ignored silently while the SessionStart hook, which does see the project settings, still attaches. Enable therefore turns gateway mode off for the project.
+	// EnvUseGateway is Claude Code's gateway mode switch, set by gateway launchers such as `everyapi use claude`. In gateway mode a session takes ANTHROPIC_BASE_URL from its process environment over project settings, so the project's proxy entries do not reach it: it keeps its gateway, which is what it should, because /neoswitch:on refuses gateway sessions and NeoSwitch could only pass their requests on to an upstream that does not know the gateway's credential. NeoSwitch versions up to 0.4.1 wrote gatewayOff into the project to force such sessions through the proxy, which sent their gateway credential to Anthropic; Enable and Disable remove that entry.
 	EnvUseGateway = "CLAUDE_CODE_USE_GATEWAY"
 	gatewayOff    = "0"
 	// TokenHeader is the header that carries NeoSwitch's token.
@@ -51,7 +51,9 @@ func Enable(project string, s State, r Route) error {
 		env[envBaseURL] = s.BaseURL()
 		env[envHeaders] = r.Headers(s)
 		env[envExtraCAs] = r.Bundle
-		env[EnvUseGateway] = gatewayOff
+		if env[EnvUseGateway] == gatewayOff {
+			delete(env, EnvUseGateway)
+		}
 	})
 }
 

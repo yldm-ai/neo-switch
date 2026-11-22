@@ -96,10 +96,9 @@ Google 登录信息由 `agy` 保存，不归 NeoSwitch 管，卸载后仍然保�
 
 ## NeoSwitch 会改动什么
 
-当某个项目里有会话在用 Gemini 4 Neon 时，NeoSwitch 会往这个项目的 `.claude/settings.local.json` 的 `env` 对象中加入四项；这个项目里不再有会话使用它时，就把它们删掉：
+当某个项目里有会话在用 Gemini 4 Neon 时，NeoSwitch 会往这个项目的 `.claude/settings.local.json` 的 `env` 对象中加入三项；这个项目里不再有会话使用它时，就把它们删掉：
 
 - `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS` 和 `NODE_EXTRA_CA_CERTS`：让这个项目的 Claude Code 请求经过一条只有 NeoSwitch 能应答的加密连接，发到这台电脑上的 NeoSwitch。你切换过的会话由 Gemini 4 Neon 回答；其他请求原样转给 Claude，用的是你自己的 Claude 登录，NeoSwitch 既不保存也不记录它。请求头里的密钥只能用来访问本机的 NeoSwitch。
-- `CLAUDE_CODE_USE_GATEWAY=0`：让这些会话直接连 NeoSwitch。有些工具会通过别的网关启动 Claude Code 并打开网关模式，那样 Claude Code 就会忽略 NeoSwitch。
 
 在 Git 项目里，NeoSwitch 还会把 `.claude/settings.local.json` 加进本地仓库自己的排除列表（`.git/info/exclude`），让这个 token 不会被提交；你的 `.gitignore` 不会被改动。
 
