@@ -233,6 +233,53 @@ func TestToGeminiExplainsUnsupportedFeaturesPlainly(t *testing.T) {
 	}
 }
 
+func TestToGeminiLeavesOutTheAdvisorTool(t *testing.T) {
+	// The advisor entry is what Claude Code sends on every request when the advisor is enabled.
+	const advisor = `{"type":"advisor_20260301","name":"advisor","model":"claude-opus-5-5","defer_loading":true}`
+
+	got, err := ToGemini(mustDecode(t, `{"tools":[`+advisor+`,{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"a"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Config.Tools) != 1 || len(got.Config.Tools[0].FunctionDeclarations) != 1 || got.Config.Tools[0].FunctionDeclarations[0].Name != "Read" {
+		t.Fatalf("tools = %+v", got.Config.Tools)
+	}
+
+	got, err = ToGemini(mustDecode(t, `{"tools":[`+advisor+`],"messages":[{"role":"user","content":"a"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Config.Tools != nil {
+		t.Fatalf("a request whose only tool is the advisor must send no tools, got %+v", got.Config.Tools)
+	}
+}
+
+func TestToGeminiDropsAdvisorExchangesFromHistory(t *testing.T) {
+	got, err := ToGemini(mustDecode(t, `{"messages":[
+		{"role":"user","content":"a"},
+		{"role":"assistant","content":[
+			{"type":"server_tool_use","id":"srvtoolu_1","name":"advisor","input":{}},
+			{"type":"advisor_tool_result","tool_use_id":"srvtoolu_1","content":{"type":"advisor_result","text":"advice"}},
+			{"type":"text","text":"answer"}
+		]},
+		{"role":"user","content":"b"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Contents) != 3 {
+		t.Fatalf("contents = %+v", got.Contents)
+	}
+	model := got.Contents[1]
+	if len(model.Parts) != 1 || model.Parts[0].Text != "answer" {
+		t.Fatalf("model turn must keep only its text: %+v", model.Parts)
+	}
+
+	if _, err := ToGemini(mustDecode(t, `{"messages":[{"role":"assistant","content":[{"type":"server_tool_use","id":"srvtoolu_2","name":"web_search","input":{"query":"q"}}]},{"role":"user","content":"a"}]}`)); err == nil {
+		t.Fatal("server_tool_use for tools other than the advisor must still be rejected")
+	}
+}
+
 // TestToGeminiAcceptsClaudeCodeToolSchemas runs every built-in tool schema from a captured Claude Code request through the translator and checks they reach Gemini as JSON Schema, byte-for-byte equivalent.
 func TestToGeminiAcceptsClaudeCodeToolSchemas(t *testing.T) {
 	data, err := os.ReadFile("testdata/claude-code-tools.json")
