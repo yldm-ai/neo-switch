@@ -1,4 +1,6 @@
-// Answers /neoswitch:login and /neoswitch:status in Claude Code itself, without a model reply. As skills they end in a model turn that repeats the command's output: about 26 s on a session switched to Gemini, a sign-in link a model may copy wrongly, and no answer at all while the switched session's model fails, when status matters most. Here the output shows at once, verbatim, and /neoswitch:login asks for the code in Claude Code's own dialog, which keeps it out of the conversation.
+// Answers /neoswitch:login, /neoswitch:status, /neoswitch:on and /neoswitch:off in Claude Code itself, without a model reply. As skills they end in a model turn that repeats the command's output: about 26 s on a session switched to Gemini, which /neoswitch:on spends on Gemini right after switching, a sign-in link a model may copy wrongly, notes a model may shorten, such as the one saying other windows still run an earlier NeoSwitch, and no answer at all while the switched session's model fails, when status matters most. Here the output shows at once, verbatim, and /neoswitch:login asks for the code in Claude Code's own dialog, which keeps it out of the conversation.
+//
+// The commands run with the same environment as the skills' commands: a spawned process gets Claude Code's own environment, which the project settings were applied to, under the variables of hookEnv.
 //
 // The skills stay: they register the commands, and they answer wherever this module does not, such as an older Claude Code, WSL or the desktop app over SSH. Before the command has run, any problem hands the command to the skill; after, it is answered here, because running the skill too would start a second sign-in and void the link the user may already have opened.
 import type { EngineInterface, Register } from 'claude-code'
@@ -61,18 +63,22 @@ export const register: Register = on => {
     }
   })
 
-  on('command.run', { command: 'neoswitch:status' }, async ($, e, next) => {
-    if (!(await supported($))) return next(e)
-    let started = false
-    try {
-      const env = await commandEnv($)
-      started = true
-      return answer(await run($, env, ['status', env.CLAUDE_PROJECT_DIR ?? '']))
-    } catch (err) {
-      if (!started) return next(e)
-      return { text: `NeoSwitch: ${message(err)}.`, isTextDisplayOnly: true as const }
-    }
-  })
+  for (const command of ['status', 'on', 'off'] as const) {
+    on('command.run', { command: `neoswitch:${command}` }, async ($, e, next) => {
+      if (!(await supported($))) return next(e)
+      let started = false
+      try {
+        const env = await commandEnv($)
+        started = true
+        return answer(await run($, env, [command, env.CLAUDE_PROJECT_DIR ?? '']), `/neoswitch:${command}`)
+      } catch (err) {
+        if (!started) return next(e)
+        // After the command ran, the skill would run it a second time.
+        const where = command === 'status' ? '' : ' Run /neoswitch:status to see where this session stands.'
+        return { text: `NeoSwitch: ${message(err)}.${where}`, isTextDisplayOnly: true as const }
+      }
+    })
+  }
 }
 
 // supported tells whether this Claude Code keeps the answer from the model; otherwise the skill answers. An engine too old to report its version throws here, which counts as too old.
@@ -127,9 +133,10 @@ async function run($: EngineInterface, env: Record<string, string>, args: string
   return { code, stdout, errors }
 }
 
-function answer(ran: Ran): { text: string; isTextDisplayOnly: true } {
+// answer shows what the CLI said; command is the one to run again when it stopped without saying why.
+function answer(ran: Ran, command = '/neoswitch:login'): { text: string; isTextDisplayOnly: true } {
   const parts = [ran.stdout.trim(), ...ran.errors].filter(part => part !== '')
-  if (parts.length === 0 && ran.code !== 0) parts.push('NeoSwitch stopped without saying why. Run /neoswitch:login again.')
+  if (parts.length === 0 && ran.code !== 0) parts.push(`NeoSwitch stopped without saying why. Run ${command} again.`)
   return { text: parts.join('\n'), isTextDisplayOnly: true }
 }
 
