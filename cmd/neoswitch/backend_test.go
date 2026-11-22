@@ -324,6 +324,9 @@ func mustOn(t *testing.T, project string) {
 
 func TestAttachNotice(t *testing.T) {
 	agy := backendLabel(backendAntigravity, "")
+	released := version
+	version = "v0.4.5"
+	t.Cleanup(func() { version = released })
 	for _, tc := range []struct {
 		name    string
 		notice  string
@@ -335,12 +338,14 @@ func TestAttachNotice(t *testing.T) {
 		{"success names the model", "", agy, daemon.Info{Backend: agy, Version: version}, true, "this session uses Gemini 4 Neon through your Google account (Antigravity sign-in). Ignore the Claude model name in the header. The first reply can take a while."},
 		{"api key", "", "Gemini Developer API", daemon.Info{Backend: "Gemini Developer API", Version: version}, true, "through a Gemini API key"},
 		{"earlier backend", "", "Gemini Developer API", daemon.Info{Backend: agy, Version: version}, true, "still share the earlier setup (your Google account (Antigravity sign-in))"},
-		{"earlier version", "", agy, daemon.Info{Backend: agy, Version: "v0.0.1"}, true, "still use the earlier NeoSwitch version"},
-		{"daemon without version", "", agy, daemon.Info{Backend: agy}, true, "Close all Claude Code windows"},
+		{"earlier version", "", agy, daemon.Info{Backend: agy, Version: "v0.0.1"}, true, "still use v0.0.1 of NeoSwitch, so this session does too. Run /neoswitch:on here to move every open window to NeoSwitch v0.4.5; a reply still in progress in another window stops."},
+		{"earlier version that hands over", "", agy, daemon.Info{Backend: agy, Version: "v0.4.4", Handover: daemon.HandoverProtocol}, true, "Run /neoswitch:on here to move every open window to NeoSwitch v0.4.5."},
+		{"later version", "", agy, daemon.Info{Backend: agy, Version: "v0.9.0"}, true, "this session uses Gemini 4 Neon through"},
+		{"daemon without version", "", agy, daemon.Info{Backend: agy}, true, "still use an earlier version of NeoSwitch"},
 		{"gateway notice only", "NeoSwitch: gateway.", agy, daemon.Info{Backend: agy, Version: version}, true, "NeoSwitch: gateway."},
 		{"tracked project", "", agy, daemon.Info{Backend: agy, Version: version}, true, "/neoswitch:off continues this session on Claude."},
 		{"same model", "", agy, daemon.Info{Backend: agy, Version: version, Model: provider.DefaultModel}, true, "this session uses Gemini 4 Neon through"},
-		{"earlier model", "", agy, daemon.Info{Backend: agy, Version: version, Model: "gemini-3.8-flash"}, true, "other Claude Code windows started NeoSwitch with gemini-3.8-flash, so this session uses it too. To use Gemini 4 Neon"},
+		{"earlier model", "", agy, daemon.Info{Backend: agy, Version: version, Model: "gemini-3.8-flash"}, true, "other Claude Code windows started NeoSwitch with gemini-3.8-flash, so this session uses it too. Run /neoswitch:on here to move every open window to Gemini 4 Neon"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := attachNotice(tc.notice, provider.DefaultModel, tc.label, tc.info, tc.running, tc.name == "tracked project")
@@ -434,5 +439,42 @@ func TestOnChecksTheRunningDaemonsModel(t *testing.T) {
 	}
 	if settingsExist(t, second) {
 		t.Fatal("a session was switched to a model the account's plan does not offer")
+	}
+}
+
+func TestPlanTakeover(t *testing.T) {
+	agy := backendLabel(backendAntigravity, "")
+	released := version
+	version = "v0.4.5"
+	t.Cleanup(func() { version = released })
+	model := provider.DefaultModel
+	handing := daemon.HandoverProtocol
+	for _, tc := range []struct {
+		name     string
+		info     daemon.Info
+		explicit bool
+		want     takeoverPlan
+	}{
+		{"earlier release hands over", daemon.Info{Backend: agy, Model: model, Version: "v0.4.4", Handover: handing}, false, handOver},
+		{"same release stays", daemon.Info{Backend: agy, Model: model, Version: "v0.4.5+source.other", Handover: handing}, false, keepDaemon},
+		// 两个插件版本同时开着时，旧窗口的 hook 绝不能把端口抢回旧版本。
+		{"later release stays", daemon.Info{Backend: agy, Model: model, Version: "v0.4.6", Handover: handing}, true, keepDaemon},
+		{"another model stays without the user", daemon.Info{Backend: agy, Model: "gemini-3.8-flash", Version: "v0.4.4", Handover: handing}, false, keepDaemon},
+		{"another model moves on /neoswitch:on", daemon.Info{Backend: agy, Model: "gemini-3.8-flash", Version: "v0.4.5", Handover: handing}, true, handOver},
+		{"another build moves on /neoswitch:on", daemon.Info{Backend: agy, Model: model, Version: "v0.4.5+source.other", Handover: handing}, true, handOver},
+		{"same daemon stays on /neoswitch:on", daemon.Info{Backend: agy, Model: model, Version: "v0.4.5", Handover: handing}, true, keepDaemon},
+		{"daemon before handovers stays without the user", daemon.Info{Backend: agy, Model: model, Version: "v0.4.4"}, false, keepDaemon},
+		{"daemon before handovers is replaced on /neoswitch:on", daemon.Info{Backend: agy, Model: model, Version: "v0.4.0"}, true, replaceLegacy},
+		{"daemon before versions is replaced on /neoswitch:on", daemon.Info{Backend: agy}, true, replaceLegacy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tc.want
+			if !daemon.HandoverSupported() {
+				want = keepDaemon
+			}
+			if got := planTakeover(t.TempDir(), tc.info, agy, model, tc.explicit); got != want {
+				t.Fatalf("planTakeover = %d, want %d", got, want)
+			}
+		})
 	}
 }

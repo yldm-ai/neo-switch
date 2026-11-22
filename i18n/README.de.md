@@ -46,7 +46,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 - Eine Antwort kann 5 bis 40 Sekunden brauchen, bis die ersten Wörter erscheinen. Das ist normal. Wenn Sie sich mit `/neoswitch:login` angemeldet haben, beginnen Antworten mit `/effort low` früher.
 - Der erste NeoSwitch-Befehl nach einer Installation oder einem Update kann bis zu einer Minute dauern, während sich NeoSwitch vorbereitet.
 - `/neoswitch:status` sagt Ihnen jederzeit, ob diese Sitzung Claude oder Gemini 4 Neon nutzt und was als Nächstes zu tun ist.
-- Wenn eine neuere NeoSwitch-Version verfügbar ist, sagt die Sitzungsnotiz das und nennt die Befehle zum Aktualisieren. Mit eingeschaltetem auto-update installiert Claude Code sie selbst; sie gilt, sobald alle Claude-Code-Fenster geschlossen und wieder geöffnet wurden.
+- Wenn eine neuere NeoSwitch-Version verfügbar ist, sagt die Sitzungsnotiz das und nennt die Befehle zum Aktualisieren. Mit eingeschaltetem auto-update installiert Claude Code sie selbst, und die schon geöffneten Fenster wechseln zu ihr, sobald eine neue Claude-Code-Sitzung startet. Unter Windows gilt sie, sobald alle Claude-Code-Fenster geschlossen und wieder geöffnet wurden.
 
 ## Wenn etwas nicht klappt
 
@@ -55,7 +55,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 | Der Sitzungshinweis sagt, NeoSwitch sei noch nicht eingerichtet | Führen Sie `/neoswitch:login` aus. Ihre nächste Nachricht nutzt Gemini 4 Neon. |
 | Eine Meldung sagt, `agy` sei nicht installiert | `/neoswitch:login` konnte es nicht selbst installieren. Führen Sie `curl -fsSL https://antigravity.google/cli/install.sh \| bash` in einem Terminal aus oder installieren Sie es über [Googles Download-Seite](https://antigravity.google/download), und führen Sie dann `/neoswitch:login` erneut aus. |
 | Jede Nachricht scheitert mit einem Verbindungsfehler, oder der Sitzungshinweis sagt, diese Sitzung könne nicht antworten | Führen Sie `/neoswitch:off` aus: Diese Sitzung arbeitet ab ihrer nächsten Nachricht mit Claude weiter, auch wenn die Antwort auf den Befehl selbst scheitert. Scheitern Nachrichten weiter, geben Sie `/exit` ein und starten Sie `claude` erneut: Eine neue Sitzung nutzt Claude, und `/neoswitch:status` sagt Ihnen, was zu beheben ist. |
-| Der Hinweis sagt, andere Claude-Code-Fenster teilten noch die bisherige Einrichtung | Schließen Sie alle Claude-Code-Fenster, öffnen Sie Claude Code erneut und führen Sie `/neoswitch:on` aus. |
+| Der Hinweis sagt, andere Claude-Code-Fenster teilten noch die bisherige Einrichtung | Führen Sie `/neoswitch:on` in dieser Sitzung aus: alle geöffneten Fenster wechseln zu ihrer Einrichtung. Unter Windows schließen Sie alle Claude-Code-Fenster, öffnen Claude Code erneut und führen `/neoswitch:on` aus. |
 | Eine Warnung sagt, claude.ai-Connectors seien deaktiviert, weil eine andere Anmeldequelle gesetzt ist | NeoSwitch verursacht das nicht mehr; eine frühere Version tat es. Aktualisieren Sie das Plugin (siehe unten). Bleibt die Warnung, setzt ein anderes Werkzeug `ANTHROPIC_AUTH_TOKEN` oder `ANTHROPIC_API_KEY` für Claude Code. |
 | Der Hinweis sagt, ein anderes Programm belege den Port, den NeoSwitch braucht | Schließen Sie dieses Programm und starten Sie Claude Code erneut, oder führen Sie `/neoswitch:off` aus. |
 | Der Hinweis sagt, NeoSwitch habe sein Programm nicht herunterladen können | Prüfen Sie Ihre Internetverbindung und starten Sie Claude Code erneut. |
@@ -66,7 +66,7 @@ Der Befehl zeigt außerdem einen Link, falls Sie den geöffneten Browser nicht n
 
 - `/neoswitch:off` schaltet diese Sitzung ab ihrer nächsten Nachricht zurück auf Claude, mit Ihrer eigenen Claude-Anmeldung. `/neoswitch:on` schaltet sie wieder auf Gemini 4 Neon, ohne dass Sie etwas neu einrichten. Mit dem Schließen einer Sitzung endet ihre Umschaltung: Jede neue Sitzung beginnt mit Claude.
 
-Um von Hand zu aktualisieren, führen Sie dies in einem Terminal aus und schließen Sie dann alle Claude-Code-Fenster und öffnen Sie sie wieder:
+Um von Hand zu aktualisieren, führen Sie dies in einem Terminal aus und öffnen Sie dann eine neue Claude-Code-Sitzung: die schon geöffneten Fenster wechseln ebenfalls zur neuen Version (unter Windows schließen Sie alle Claude-Code-Fenster und öffnen sie wieder):
 
 ```bash
 claude plugin marketplace update neoswitch

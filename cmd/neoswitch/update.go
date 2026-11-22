@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +120,7 @@ func runUpdateCheck(dir, url string) error {
 		return err
 	}
 	latest := "v" + strings.TrimSpace(string(body))
-	if _, ok := parseVersion(latest); !ok {
+	if _, ok := daemon.ParseVersion(latest); !ok {
 		return fmt.Errorf("update check: %s returned %q, which is not a version", url, latest)
 	}
 	cache := loadUpdateCache(dir)
@@ -139,46 +138,13 @@ func updateCheckCommand() error {
 	return runUpdateCheck(dir, updateCheckURL)
 }
 
-// parseVersion reads vMAJOR.MINOR.PATCH. Build metadata after "+", which source builds carry, is ignored; anything else, such as "dev", is not a version.
-func parseVersion(v string) ([3]int, bool) {
-	var parts [3]int
-	core, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), "+")
-	fields := strings.Split(core, ".")
-	if len(fields) != 3 {
-		return parts, false
-	}
-	for i, field := range fields {
-		n, err := strconv.Atoi(field)
-		if err != nil || n < 0 {
-			return parts, false
-		}
-		parts[i] = n
-	}
-	return parts, true
-}
-
-// newerVersion reports whether latest is a later release than current. Unparsable versions never count as newer.
-func newerVersion(latest, current string) bool {
-	l, ok := parseVersion(latest)
-	c, ok2 := parseVersion(current)
-	if !ok || !ok2 {
-		return false
-	}
-	for i := range l {
-		if l[i] != c[i] {
-			return l[i] > c[i]
-		}
-	}
-	return false
-}
-
 // updateNotice is the note shown while a newer version is known, empty otherwise. It reads only the cache and makes no network call.
 func updateNotice(dir string) string {
 	if !updateCheckEnabled() {
 		return ""
 	}
 	latest := loadUpdateCache(dir).Latest
-	if !newerVersion(latest, version) {
+	if !daemon.NewerVersion(latest, version) {
 		return ""
 	}
 	current, _, _ := strings.Cut(version, "+")

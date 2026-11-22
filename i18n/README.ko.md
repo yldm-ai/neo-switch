@@ -46,7 +46,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 - 답의 첫 글자가 나오기까지 5~40초가 걸릴 수 있으며 정상입니다. `/neoswitch:login`으로 로그인했다면 `/effort low`로 답이 더 빨리 시작됩니다.
 - 설치나 업데이트 후 첫 NeoSwitch 명령은 준비 때문에 최대 1분쯤 걸릴 수 있습니다.
 - `/neoswitch:status`를 실행하면 이 세션이 Claude와 Gemini 4 Neon 중 무엇을 쓰는지, 다음에 무엇을 하면 되는지 언제든 알려 줍니다.
-- 새 NeoSwitch가 나오면 세션 시작 메시지로 알려 주고 업데이트 명령을 보여 줍니다. 자동 업데이트가 켜져 있으면 Claude Code가 직접 설치하며, Claude Code 창을 모두 닫았다가 다시 열면 적용됩니다.
+- 새 NeoSwitch가 나오면 세션 시작 메시지로 알려 주고 업데이트 명령을 보여 줍니다. 자동 업데이트가 켜져 있으면 Claude Code가 직접 설치하며, 이미 열려 있는 창도 새 Claude Code 세션이 시작되면 새 버전으로 넘어갑니다. Windows에서는 Claude Code 창을 모두 닫았다가 다시 열면 적용됩니다.
 
 ## 문제가 생기면
 
@@ -55,7 +55,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 | 세션 시작 안내에 NeoSwitch가 아직 설정되지 않았다고 나옴 | `/neoswitch:login`을 실행하세요. 다음 메시지부터 Gemini 4 Neon을 씁니다. |
 | `agy`가 설치되어 있지 않다는 메시지가 나옴 | `/neoswitch:login`이 자동으로 설치하지 못한 경우입니다. 터미널에서 `curl -fsSL https://antigravity.google/cli/install.sh \| bash`를 실행하거나 [Google 다운로드 페이지](https://antigravity.google/download)에서 설치한 뒤 `/neoswitch:login`을 다시 실행하세요. |
 | 모든 메시지가 연결 오류로 실패하거나, 세션 시작 안내에 이 세션이 답할 수 없다고 나온다 | `/neoswitch:off`를 실행하세요. 이 명령의 답 자체가 실패해도 이 세션은 다음 메시지부터 Claude로 돌아갑니다. 그래도 메시지가 계속 실패하면 `/exit`를 입력하고 `claude`를 다시 시작하세요. 새 세션은 Claude를 쓰며, `/neoswitch:status`가 무엇을 고쳐야 하는지 알려 줍니다. |
-| 다른 Claude Code 창이 이전 설정을 함께 쓰고 있다고 나옴 | Claude Code 창을 모두 닫고 다시 연 뒤 `/neoswitch:on`을 실행하세요. |
+| 다른 Claude Code 창이 이전 설정을 함께 쓰고 있다고 나옴 | 이 세션에서 `/neoswitch:on`을 실행하면 열려 있는 모든 창이 이 세션의 설정으로 넘어갑니다. Windows에서는 Claude Code 창을 모두 닫고 다시 연 뒤 `/neoswitch:on`을 실행하세요. |
 | 다른 인증 소스가 설정되어 claude.ai connectors가 비활성화되었다는 경고가 나온다 | 지금의 NeoSwitch는 이 경고를 일으키지 않습니다. 이전 버전이 원인이었습니다. 플러그인을 업데이트하세요(아래 참고). 그래도 나오면 다른 도구가 Claude Code에 `ANTHROPIC_AUTH_TOKEN`이나 `ANTHROPIC_API_KEY`를 설정한 것입니다. |
 | NeoSwitch에 필요한 포트를 다른 프로그램이 쓰고 있다고 나옴 | 그 프로그램을 닫고 Claude Code를 다시 시작하거나 `/neoswitch:off`를 실행하세요. |
 | NeoSwitch가 프로그램을 내려받지 못했다고 나옴 | 인터넷 연결을 확인하고 Claude Code를 다시 시작하세요. |
@@ -66,7 +66,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 
 - `/neoswitch:off`는 이 세션을 다음 메시지부터 본인의 Claude 로그인으로 Claude에 돌려놓습니다. `/neoswitch:on`은 다시 설정하지 않고 Gemini 4 Neon으로 다시 전환합니다. 세션을 닫으면 전환도 끝나며, 새 세션은 모두 Claude로 시작합니다.
 
-직접 업데이트하려면 터미널에서 다음을 실행한 뒤 Claude Code 창을 모두 닫았다가 다시 여세요.
+직접 업데이트하려면 터미널에서 다음을 실행한 뒤 새 Claude Code 세션을 여세요. 이미 열려 있는 창도 새 버전으로 넘어갑니다(Windows에서는 Claude Code 창을 모두 닫았다가 다시 여세요).
 
 ```bash
 claude plugin marketplace update neoswitch

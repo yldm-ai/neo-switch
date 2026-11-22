@@ -46,7 +46,7 @@ El comando también muestra un enlace, para cuando no puedes usar el navegador q
 - Una respuesta puede tardar de 5 a 40 segundos en mostrar sus primeras palabras. Es normal. Si iniciaste sesión con `/neoswitch:login`, `/effort low` hace que las respuestas empiecen antes.
 - El primer comando de NeoSwitch tras instalar o actualizar puede tardar hasta un minuto mientras NeoSwitch se prepara.
 - `/neoswitch:status` te dice en cualquier momento si esta sesión usa Claude o Gemini 4 Neon, y qué hacer después.
-- Cuando hay una versión más nueva de NeoSwitch, la nota de la sesión lo dice y muestra los comandos para actualizar. Con auto-update activado, Claude Code la instala solo, y se aplica cuando cierras todas las ventanas de Claude Code y las vuelves a abrir.
+- Cuando hay una versión más nueva de NeoSwitch, la nota de la sesión lo dice y muestra los comandos para actualizar. Con auto-update activado, Claude Code la instala solo, y las ventanas ya abiertas pasan a ella en cuanto se inicia una sesión nueva de Claude Code. En Windows se aplica cuando cierras todas las ventanas de Claude Code y las vuelves a abrir.
 
 ## Si algo falla
 
@@ -55,7 +55,7 @@ El comando también muestra un enlace, para cuando no puedes usar el navegador q
 | El aviso de la sesión dice que NeoSwitch aún no está configurado | Ejecuta `/neoswitch:login`. Tu siguiente mensaje usa Gemini 4 Neon. |
 | Un mensaje dice que `agy` no está instalado | `/neoswitch:login` no pudo instalarlo por sí solo. Ejecuta `curl -fsSL https://antigravity.google/cli/install.sh \| bash` en una terminal o instálalo desde la [página de descarga de Google](https://antigravity.google/download), y vuelve a ejecutar `/neoswitch:login`. |
 | Todos los mensajes fallan con un error de conexión, o el aviso de la sesión dice que esta sesión no puede responder | Ejecuta `/neoswitch:off`: esta sesión sigue con Claude desde su siguiente mensaje, aunque la respuesta al propio comando falle. Si los mensajes siguen fallando, escribe `/exit` y vuelve a iniciar `claude`: una sesión nueva usa Claude, y `/neoswitch:status` te dice qué arreglar. |
-| El aviso dice que otras ventanas de Claude Code siguen compartiendo la configuración anterior | Cierra todas las ventanas de Claude Code, vuelve a abrir Claude Code y ejecuta `/neoswitch:on`. |
+| El aviso dice que otras ventanas de Claude Code siguen compartiendo la configuración anterior | Ejecuta `/neoswitch:on` en esta sesión: todas las ventanas abiertas pasan a su configuración. En Windows, cierra todas las ventanas de Claude Code, vuelve a abrir Claude Code y ejecuta `/neoswitch:on`. |
 | Un aviso dice que los conectores de claude.ai están desactivados porque hay otra fuente de autenticación | NeoSwitch ya no lo causa; lo causaba una versión anterior. Actualiza el plugin (ver abajo). Si sigue apareciendo, otra herramienta define `ANTHROPIC_AUTH_TOKEN` o `ANTHROPIC_API_KEY` para Claude Code. |
 | El aviso dice que otro programa está usando el puerto que necesita NeoSwitch | Cierra ese programa y vuelve a iniciar Claude Code, o ejecuta `/neoswitch:off`. |
 | El aviso dice que NeoSwitch no pudo descargar su programa | Comprueba tu conexión a internet y vuelve a iniciar Claude Code. |
@@ -66,7 +66,7 @@ El comando también muestra un enlace, para cuando no puedes usar el navegador q
 
 - `/neoswitch:off` devuelve esta sesión a Claude desde su siguiente mensaje, con tu propio inicio de sesión de Claude. `/neoswitch:on` la vuelve a cambiar a Gemini 4 Neon sin configurar nada de nuevo. Cerrar una sesión termina su cambio: cada sesión nueva empieza en Claude.
 
-Para actualizar a mano, ejecuta esto en una terminal y luego cierra todas las ventanas de Claude Code y vuelve a abrirlas:
+Para actualizar a mano, ejecuta esto en una terminal y luego abre una sesión nueva de Claude Code: las ventanas ya abiertas también pasan a la nueva versión (en Windows, cierra todas las ventanas de Claude Code y vuelve a abrirlas):
 
 ```bash
 claude plugin marketplace update neoswitch

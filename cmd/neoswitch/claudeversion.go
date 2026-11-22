@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yldm-ai/neo-switch/internal/daemon"
 )
 
 // dialogMinVersion is the first Claude Code version where the plugin's mod shows /neoswitch:login's link and asks for the code itself, without a model reply: mods load from 2.1.287, and a command's output stays out of model requests (isTextDisplayOnly) from 2.1.326. The mod hands older versions to the skill, whose output reaches the user only through a model reply. plugin/mod/commands.ts holds the same number.
@@ -17,7 +19,7 @@ const claudeCodeExecEnv = "CLAUDE_CODE_EXECPATH"
 // dialogVersionHint tells a user whose /neoswitch:login went through the skill that updating Claude Code shows the link at once. It says so only when the running Claude Code is known to be older than dialogMinVersion: the skill also runs where mods do not load at all (WSL, the desktop app over SSH, a policy that allows only managed mods), and there an update would not help.
 func dialogVersionHint() string {
 	version := runningClaudeCodeVersion()
-	if !newerVersion(dialogMinVersion, version) {
+	if !daemon.NewerVersion(dialogMinVersion, version) {
 		return ""
 	}
 	return "Claude Code " + dialogMinVersion + " or later shows this link at once, without waiting for a reply, and asks for the code in a dialog. This session runs " + version + "; update it with: claude update"
@@ -30,7 +32,7 @@ func runningClaudeCodeVersion() string {
 		return ""
 	}
 	if name := filepath.Base(path); name != "claude" {
-		if _, ok := parseVersion(name); ok && !strings.HasPrefix(name, "v") {
+		if _, ok := daemon.ParseVersion(name); ok && !strings.HasPrefix(name, "v") {
 			return name
 		}
 		return ""
@@ -43,7 +45,7 @@ func runningClaudeCodeVersion() string {
 	}
 	// Claude Code answers such as "2.1.330 (Claude Code)".
 	version, rest, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
-	if _, ok := parseVersion(version); !ok || rest != "(Claude Code)" {
+	if _, ok := daemon.ParseVersion(version); !ok || rest != "(Claude Code)" {
 		return ""
 	}
 	return version

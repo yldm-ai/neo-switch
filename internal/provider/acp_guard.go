@@ -77,7 +77,7 @@ func selfExecutable() (string, string, error) {
 	return selfPath, selfSum, selfErr
 }
 
-// installToolGuard prepares workspace: the hook binary, hooks.json, and the decision records, dropping records and hook binaries older than a day or a week. Files are rewritten only when their content changes, atomically, so a running agy never reads half a file.
+// installToolGuard prepares workspace: the hook binary, hooks.json, and the decision records, dropping records older than a day and hook binaries older than a month. Files are rewritten only when their content changes, atomically, so a running agy never reads half a file.
 func installToolGuard(workspace string) error {
 	exe, sum, err := selfExecutable()
 	if err != nil {
@@ -114,7 +114,8 @@ func installToolGuard(workspace string) error {
 		return err
 	}
 	pruneOlder(records, guardRecordAge, "")
-	pruneOlder(filepath.Join(agents, "bin"), 7*24*time.Hour, name)
+	// A month, not a week: after an update the previous daemon's agy may still finish a reply with its hook while this one starts (handover.go), and a daemon can run for weeks.
+	pruneOlder(filepath.Join(agents, "bin"), 30*24*time.Hour, name)
 	return nil
 }
 

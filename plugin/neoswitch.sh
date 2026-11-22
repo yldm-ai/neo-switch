@@ -24,12 +24,17 @@ fi
 version=v$(tr -d ' \t\r\n' <"$root/VERSION")
 preparing="NeoSwitch: getting ready after an install or update; this can take up to a minute."
 
-# prune removes the binaries of other plugin versions from the cache, keeping $1, the one about to run, and builds or downloads still in progress. A daemon started from a removed binary keeps running; the next session start tells the user it is outdated.
+# prune removes the binaries of other plugin versions from the cache, keeping $1, the one about to run, builds or downloads still in progress, and binaries of later releases: a window still running an earlier plugin rebuilds its own binary when the user clears or resumes a session there, and removing the update then would put every window's hooks back on the earlier release. A daemon started from a removed binary keeps running until a later release takes its port over (see docs/design-session-routing.md, "Updates").
 prune() {
+	keep=$("$1" version 2>/dev/null | cut -d' ' -f2)
 	for old in "$cache"/neoswitch-*; do
 		case $old in
 		"$1" | *.tmp) ;;
-		*) if [ -f "$old" ]; then rm -f "$old"; fi ;;
+		*)
+			if [ -f "$old" ] && ! "$1" is-newer "$("$old" version 2>/dev/null | cut -d' ' -f2)" "$keep" 2>/dev/null; then
+				rm -f "$old"
+			fi
+			;;
 		esac
 	done
 }

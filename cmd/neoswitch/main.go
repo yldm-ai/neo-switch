@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yldm-ai/neo-switch/internal/daemon"
 	"github.com/yldm-ai/neo-switch/internal/provider"
 	"github.com/yldm-ai/neo-switch/internal/server"
 )
@@ -53,7 +54,7 @@ func main() {
 	case "attach":
 		err = attach(os.Args[2:])
 	case "daemon":
-		err = runDaemon()
+		err = runDaemon(os.Args[2:])
 	case provider.AgyHookCommand:
 		// agy's tool guard: see provider/acp_guard.go. It never fails: anything wrong is a deny.
 		_ = provider.RunAgyHook(os.Args[2:], os.Stdin, os.Stdout)
@@ -62,6 +63,12 @@ func main() {
 		err = updateCheckCommand()
 	case "version", "--version":
 		fmt.Println("neoswitch", version)
+		return
+	case "is-newer":
+		// For neoswitch.sh, which keeps the binaries of later releases when it prunes: exits 0 when the first version is a later release than the second.
+		if len(os.Args) != 4 || !daemon.NewerVersion(os.Args[2], os.Args[3]) {
+			os.Exit(1)
+		}
 		return
 	case "help", "--help", "-h":
 		usage()

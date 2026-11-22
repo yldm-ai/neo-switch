@@ -46,7 +46,7 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 - 回答の最初の文字が出るまで 5〜40 秒かかることがありますが、正常です。`/neoswitch:login` でログインした場合は、`/effort low` で回答が早く始まります。
 - インストールや更新のあと最初の NeoSwitch コマンドは、準備のために最大 1 分ほどかかることがあります。
 - `/neoswitch:status` を実行すると、このセッションが Claude と Gemini 4 Neon のどちらを使っているか、次に何をすればよいかがいつでもわかります。
-- 新しい NeoSwitch が出ると、セッション開始時のメッセージでお知らせし、更新コマンドを表示します。自動更新がオンなら Claude Code が自分でインストールし、Claude Code のウィンドウをすべて閉じて開き直すと反映されます。
+- 新しい NeoSwitch が出ると、セッション開始時のメッセージでお知らせし、更新コマンドを表示します。自動更新がオンなら Claude Code が自分でインストールし、すでに開いているウィンドウも、新しい Claude Code セッションが始まった時点で新しい版に切り替わります。Windows では Claude Code のウィンドウをすべて閉じて開き直すと反映されます。
 
 ## うまくいかないとき
 
@@ -55,7 +55,7 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 | セッション開始時のメッセージに、NeoSwitch がまだ設定されていないと出る | `/neoswitch:login` を実行します。次のメッセージから Gemini 4 Neon を使います。 |
 | `agy` がインストールされていないと表示される | `/neoswitch:login` が自動ではインストールできませんでした。ターミナルで `curl -fsSL https://antigravity.google/cli/install.sh \| bash` を実行するか、[Google のダウンロードページ](https://antigravity.google/download)からインストールしてから、もう一度 `/neoswitch:login` を実行します。 |
 | どのメッセージも接続エラーになる、またはセッション開始時のメッセージにこのセッションは回答できないと出る | `/neoswitch:off` を実行します。そのコマンド自体の返答が失敗しても、このセッションは次のメッセージから Claude に戻ります。それでもメッセージが失敗する場合は、`/exit` と入力して `claude` を起動し直してください。新しいセッションは Claude を使い、`/neoswitch:status` で何を直せばよいかがわかります。 |
-| ほかの Claude Code ウィンドウが以前の設定を共有していると出る | Claude Code のウィンドウをすべて閉じてもう一度開き、`/neoswitch:on` を実行します。 |
+| ほかの Claude Code ウィンドウが以前の設定を共有していると出る | このセッションで `/neoswitch:on` を実行すると、開いているウィンドウがすべてこのセッションの設定に切り替わります。Windows では Claude Code のウィンドウをすべて閉じてもう一度開き、`/neoswitch:on` を実行します。 |
 | 別の認証ソースが設定されているため claude.ai connectors が無効と警告が出る | 現在の NeoSwitch はこの警告の原因になりません。以前のバージョンが原因でした。プラグインを更新してください（下記参照）。それでも出る場合は、別のツールが Claude Code に `ANTHROPIC_AUTH_TOKEN` または `ANTHROPIC_API_KEY` を設定しています。 |
 | NeoSwitch が必要とするポートを別のプログラムが使っていると出る | そのプログラムを閉じて Claude Code を起動し直すか、`/neoswitch:off` を実行します。 |
 | NeoSwitch がプログラムをダウンロードできなかったと出る | インターネット接続を確認し、Claude Code を起動し直します。 |
@@ -66,7 +66,7 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 
 - `/neoswitch:off` で、このセッションを次のメッセージからご自身の Claude のログインで Claude に戻します。`/neoswitch:on` で、設定し直さずにまた Gemini 4 Neon に切り替えます。セッションを閉じると切り替えも終わり、新しいセッションはすべて Claude で始まります。
 
-手動で更新するには、ターミナルで次を実行してから、Claude Code のウィンドウをすべて閉じて開き直します。
+手動で更新するには、ターミナルで次を実行してから、新しい Claude Code セッションを開きます。すでに開いているウィンドウも新しい版に切り替わります（Windows では Claude Code のウィンドウをすべて閉じて開き直します）。
 
 ```bash
 claude plugin marketplace update neoswitch
