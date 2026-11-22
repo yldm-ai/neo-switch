@@ -20,6 +20,9 @@ const (
 	// EnvUseGateway is Claude Code's gateway mode switch, set by gateway launchers such as `everyapi use claude`. In gateway mode a session takes ANTHROPIC_BASE_URL from its process environment over project settings, so the project's proxy entries do not reach it: it keeps its gateway, which is what it should, because /neoswitch:on refuses gateway sessions and NeoSwitch could only pass their requests on to an upstream that does not know the gateway's credential. NeoSwitch versions up to 0.4.1 wrote gatewayOff into the project to force such sessions through the proxy, which sent their gateway credential to Anthropic; Enable, Disable and the SessionStart hook remove that entry.
 	EnvUseGateway = "CLAUDE_CODE_USE_GATEWAY"
 	gatewayOff    = "0"
+	// envHintHeaders makes Claude Code say in headers which part of it sent each request: the main thread, a subagent, a compaction, or a background request such as a prompt suggestion that shares the main thread's history. The Antigravity route needs that to keep the main thread's ACP session for the main thread. Claude Code otherwise sends these headers only to its own API, depending on a remote flag. The headers are Claude Code's own hints for gateways, so passed-through requests keep working as before.
+	envHintHeaders = "CLAUDE_CODE_GATEWAY_HINT_HEADERS"
+	hintHeadersOn  = "1"
 	// TokenHeader is the header that carries NeoSwitch's token.
 	TokenHeader = "X-NeoSwitch-Token"
 )
@@ -52,6 +55,9 @@ func Enable(project string, s State, r Route) error {
 		env[envBaseURL] = s.BaseURL()
 		env[envHeaders] = r.Headers(s)
 		env[envExtraCAs] = r.Bundle
+		if _, set := env[envHintHeaders]; !set {
+			env[envHintHeaders] = hintHeadersOn
+		}
 	})
 }
 
@@ -89,6 +95,10 @@ func Disable(project string, s State) error {
 		}
 		if env[EnvUseGateway] == gatewayOff {
 			delete(env, EnvUseGateway)
+		}
+		// Like gatewayOff, a "1" next to NeoSwitch's address is taken to be NeoSwitch's.
+		if env[envHintHeaders] == hintHeadersOn {
+			delete(env, envHintHeaders)
 		}
 	})
 }

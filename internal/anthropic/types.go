@@ -35,6 +35,10 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	// AllowedDomains, BlockedDomains and MaxUses configure the web search server tool.
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
+	MaxUses        int      `json:"max_uses,omitempty"`
 }
 
 type ToolChoice struct {
@@ -76,9 +80,15 @@ type Response struct {
 }
 
 type Usage struct {
-	InputTokens          int `json:"input_tokens"`
-	OutputTokens         int `json:"output_tokens"`
-	CacheReadInputTokens int `json:"cache_read_input_tokens"`
+	InputTokens          int              `json:"input_tokens"`
+	OutputTokens         int              `json:"output_tokens"`
+	CacheReadInputTokens int              `json:"cache_read_input_tokens"`
+	ServerToolUse        *ServerToolUsage `json:"server_tool_use,omitempty"`
+}
+
+// ServerToolUsage counts the server tool calls of a response; Claude Code counts web searches from it.
+type ServerToolUsage struct {
+	WebSearchRequests int `json:"web_search_requests"`
 }
 
 type CountTokensResponse struct {

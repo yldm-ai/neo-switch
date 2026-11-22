@@ -38,7 +38,10 @@ Project settings while routed:
 ANTHROPIC_BASE_URL       = https://127.0.0.1:<port>
 ANTHROPIC_CUSTOM_HEADERS = X-NeoSwitch-Token: <token>
 NODE_EXTRA_CA_CERTS      = <state>/ca-bundle.pem   (the user's own NODE_EXTRA_CA_CERTS contents + NeoSwitch's CA)
+CLAUDE_CODE_GATEWAY_HINT_HEADERS = 1               (only when the project does not set it already)
 ```
+
+`CLAUDE_CODE_GATEWAY_HINT_HEADERS` makes Claude Code send `x-claude-code-request-class`, `x-claude-1p-request-class` and `x-claude-code-agent-id` with every request. Without it, Claude Code sends them only to its own API, depending on a remote flag. The Antigravity route keeps an ACP session per sender (see [antigravity.md](antigravity.md)), so background requests that share the main thread's history do not take its session. Claude Code reads the variable whenever it builds a request's client, so a running session picks it up on its next request (F8). Passed-through requests carry the headers too. Claude Code sends the same headers when it talks to Anthropic's API directly, and the variable exists for gateways. Disable removes a `1` the same way it removes `CLAUDE_CODE_USE_GATEWAY=0`.
 
 `CLAUDE_CODE_USE_GATEWAY` is not written. A gateway-mode session (for example `everyapi use claude`) takes `ANTHROPIC_BASE_URL` from its process environment, so it keeps its gateway; `/neoswitch:on` refuses such sessions, and forcing them through the daemon would pass the gateway's credential on to an upstream that does not accept it. The SessionStart hook does not attach them either.
 

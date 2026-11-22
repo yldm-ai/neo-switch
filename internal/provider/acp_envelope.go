@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 	"google.golang.org/genai"
@@ -19,34 +22,158 @@ import (
 
 // ---- prompt ----
 
-// acpPrompt renders the request as the text of one ACP prompt. Images become ACP image blocks sent after that text when the agent accepts them (acceptImages); the text marks where each one belongs. Attachments ACP cannot carry are marked as omitted so the model knows they existed.
-func acpPrompt(req translate.Request, acceptImages bool) (string, []acp.ContentBlock) {
-	p := &promptBuilder{acceptImages: acceptImages}
-	p.out.WriteString("Act as the language model for Claude Code. Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Do not use ACP tools, edit files, or run commands yourself.\n\n")
-	if req.Config != nil && req.Config.SystemInstruction != nil {
-		p.out.WriteString("System instructions:\n")
+// acpPromptBudget is the most text NeoSwitch puts in one ACP prompt. agy keeps only the first 192,000 bytes of a prompt's text and replaces the rest with a "<truncated N bytes>" marker telling the model to read the full transcript with its own tools, which NeoSwitch refuses: the newest messages, which come last, would be lost without any error. The margin leaves room for the instructions that open every prompt.
+const acpPromptBudget = 150_000
+
+// acpAnswerInstructions open the prompt the model answers. agy keeps the start of a prompt, so they come first.
+const acpAnswerInstructions = "Act as the language model for Claude Code. Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Do not use ACP tools, edit files, or run commands yourself.\n\n"
+
+// acpPiece is prompt text with the images that belong to it.
+type acpPiece struct {
+	text   string
+	images []acp.ContentBlock
+}
+
+// promptRenderer renders a request into prompt text. Images are numbered across the whole request.
+type promptRenderer struct {
+	acceptImages bool
+	images       int
+}
+
+// context renders the system instructions and the tool definitions, each "" when the request has none.
+func (r *promptRenderer) context(req translate.Request) (system, tools string) {
+	if req.Config == nil {
+		return "", ""
+	}
+	if req.Config.SystemInstruction != nil {
+		p := r.builder()
 		p.writeParts(req.Config.SystemInstruction.Parts)
-		p.out.WriteString("\n")
+		system = p.out.String()
 	}
-	for _, content := range req.Contents {
-		p.out.WriteString(strings.ToUpper(string(content.Role)))
-		p.out.WriteString(":\n")
-		p.writeParts(content.Parts)
-		p.out.WriteString("\n\n")
-	}
-	if req.Config != nil && len(req.Config.Tools) > 0 {
+	if len(req.Config.Tools) > 0 {
 		declarations, _ := json.Marshal(req.Config.Tools)
-		p.out.WriteString("Claude Code tool definitions for context only:\n")
-		p.out.Write(declarations)
-		p.out.WriteString("\n")
+		tools = string(declarations) + "\n"
 	}
-	return p.out.String(), p.images
+	return system, tools
+}
+
+// contextPieces labels the system instructions and tool definitions for the prompt; updated marks them as replacing those a session read before.
+func contextPieces(system, tools string, updated bool) []acpPiece {
+	systemLabel, toolsLabel := "System instructions:\n", "Claude Code tool definitions for context only:\n"
+	if updated {
+		systemLabel, toolsLabel = "Updated system instructions, replacing the earlier ones:\n", "Updated Claude Code tool definitions, replacing the earlier ones:\n"
+	}
+	var pieces []acpPiece
+	if system != "" {
+		pieces = append(pieces, acpPiece{text: systemLabel + system + "\n"})
+	}
+	if tools != "" {
+		pieces = append(pieces, acpPiece{text: toolsLabel + tools + "\n"})
+	}
+	return pieces
+}
+
+// entry renders one message of the conversation.
+func (r *promptRenderer) entry(content *genai.Content) acpPiece {
+	p := r.builder()
+	p.out.WriteString(strings.ToUpper(string(content.Role)))
+	p.out.WriteString(":\n")
+	p.writeParts(content.Parts)
+	p.out.WriteString("\n\n")
+	return acpPiece{text: p.out.String(), images: p.images}
+}
+
+func (r *promptRenderer) builder() *promptBuilder {
+	return &promptBuilder{renderer: r}
+}
+
+// acpPrompt renders the whole request as one prompt text, the way a new session reads it when it fits in one prompt. Images become ACP image blocks sent after the text when the agent accepts them (acceptImages); the text marks where each one belongs. Attachments ACP cannot carry are marked as omitted so the model knows they existed.
+func acpPrompt(req translate.Request, acceptImages bool) (string, []acp.ContentBlock) {
+	var out strings.Builder
+	var images []acp.ContentBlock
+	out.WriteString(acpAnswerInstructions)
+	for _, piece := range conversationPieces(req, acceptImages) {
+		out.WriteString(piece.text)
+		images = append(images, piece.images...)
+	}
+	return out.String(), images
+}
+
+// conversationPieces renders the request for a session that holds nothing yet: system instructions, tool definitions, then every message. The tool definitions come before the messages so that the newest message ends the prompt.
+func conversationPieces(req translate.Request, acceptImages bool) []acpPiece {
+	r := &promptRenderer{acceptImages: acceptImages}
+	system, tools := r.context(req)
+	pieces := contextPieces(system, tools, false)
+	for _, content := range req.Contents {
+		pieces = append(pieces, r.entry(content))
+	}
+	return pieces
+}
+
+// acpPrompts packs pieces into the prompts that deliver them, none longer than acpPromptBudget. Each prompt but the last asks only for {"text":"ok"}; the last starts with the answer instructions and continued, which tells a session that already holds the conversation what the new text is. A piece too long for one prompt is split, at a line break where there is one.
+func acpPrompts(pieces []acpPiece, continued string) []acpPiece {
+	const headroom = 1024
+	capacity := acpPromptBudget - len(acpAnswerInstructions) - len(continued) - headroom
+	var bins []acpPiece
+	var current acpPiece
+	flush := func() {
+		if current.text != "" || len(current.images) > 0 {
+			bins = append(bins, current)
+		}
+		current = acpPiece{}
+	}
+	for _, piece := range pieces {
+		for _, fragment := range splitPiece(piece, capacity) {
+			if len(current.text)+len(fragment.text) > capacity {
+				flush()
+			}
+			current.text += fragment.text
+			current.images = append(current.images, fragment.images...)
+		}
+	}
+	flush()
+	if len(bins) == 0 {
+		bins = []acpPiece{{}}
+	}
+	prompts := make([]acpPiece, len(bins))
+	for i, bin := range bins {
+		head := fmt.Sprintf("This is part %d of %d of a Claude Code conversation. Do not answer it yet: reply with exactly {\"text\":\"ok\"}. The conversation continues in the next message.\n\n", i+1, len(bins))
+		if i == len(bins)-1 {
+			head = acpAnswerInstructions + continued
+			if len(bins) > 1 {
+				head += fmt.Sprintf("This is the last part (%d of %d) of the conversation; the earlier parts are in the previous messages of this session.\n\n", len(bins), len(bins))
+			}
+		}
+		prompts[i] = acpPiece{text: head + bin.text, images: bin.images}
+	}
+	return prompts
+}
+
+// splitPiece cuts a piece into fragments of at most capacity bytes, at the last line break of each fragment when it is in the fragment's second half, otherwise at a character boundary. Its images go with the last fragment.
+func splitPiece(piece acpPiece, capacity int) []acpPiece {
+	if len(piece.text) <= capacity {
+		return []acpPiece{piece}
+	}
+	var fragments []acpPiece
+	text := piece.text
+	for len(text) > capacity {
+		cut := capacity
+		if newline := strings.LastIndexByte(text[:cut], '\n'); newline >= capacity/2 {
+			cut = newline + 1
+		}
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		fragments = append(fragments, acpPiece{text: text[:cut]})
+		text = text[cut:]
+	}
+	return append(fragments, acpPiece{text: text, images: piece.images})
 }
 
 type promptBuilder struct {
-	out          strings.Builder
-	acceptImages bool
-	images       []acp.ContentBlock
+	out      strings.Builder
+	renderer *promptRenderer
+	images   []acp.ContentBlock
 }
 
 func (p *promptBuilder) writeParts(parts []*genai.Part) {
@@ -78,67 +205,117 @@ func (p *promptBuilder) writeParts(parts []*genai.Part) {
 }
 
 func (p *promptBuilder) attach(mimeType string, data []byte) {
-	if !p.acceptImages || !strings.HasPrefix(mimeType, "image/") {
+	if !p.renderer.acceptImages || !strings.HasPrefix(mimeType, "image/") {
 		fmt.Fprintf(&p.out, "[%s attachment omitted: the Antigravity ACP route cannot send it]\n", mimeType)
 		return
 	}
+	p.renderer.images++
 	p.images = append(p.images, acp.ImageBlock(base64.StdEncoding.EncodeToString(data), mimeType))
-	fmt.Fprintf(&p.out, "[image %d (%s) attached]\n", len(p.images), mimeType)
+	fmt.Fprintf(&p.out, "[image %d (%s) attached]\n", p.renderer.images, mimeType)
 }
 
 // ---- answer ----
 
 var errEmptyACPAnswer = errors.New("Antigravity ACP returned an empty response")
 
-// acpResponseParts parses the JSON envelope the prompt asks for. An answer that is not JSON at all is passed through as text, since a readable answer beats an error.
-func acpResponseParts(raw string) ([]*genai.Part, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, errEmptyACPAnswer
-	}
-	clean := stripCodeFence(raw)
-	var response struct {
-		Text    string `json:"text"`
-		ToolUse *struct {
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		} `json:"tool_use"`
-	}
-	if err := json.Unmarshal([]byte(clean), &response); err != nil {
-		// Models sometimes put literal newlines or tabs inside JSON strings; accept those before giving up on the envelope.
-		if json.Unmarshal([]byte(escapeControlInStrings(clean)), &response) != nil {
-			return []*genai.Part{{Text: raw}}, nil
-		}
-	}
-	var parts []*genai.Part
-	if response.Text != "" {
-		parts = append(parts, &genai.Part{Text: response.Text})
-	}
-	if response.ToolUse != nil {
-		if strings.TrimSpace(response.ToolUse.Name) == "" {
-			return nil, errors.New("Antigravity ACP returned a tool call without a name")
-		}
-		var input map[string]any
-		if len(response.ToolUse.Input) > 0 && string(response.ToolUse.Input) != "null" {
-			if err := json.Unmarshal(response.ToolUse.Input, &input); err != nil {
-				return nil, fmt.Errorf("decode Antigravity ACP tool call: %w", err)
-			}
-		}
-		id := "acp_tool_" + rand.Text()
-		parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: id, Name: response.ToolUse.Name, Args: input}})
-	}
-	if len(parts) == 0 {
-		return nil, errors.New("Antigravity ACP returned neither text nor a tool call")
-	}
-	return parts, nil
+// acpEnvelope is the JSON object the prompt asks for.
+type acpEnvelope struct {
+	Text    string `json:"text"`
+	ToolUse *struct {
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	} `json:"tool_use"`
 }
 
-// acpAnswerParts is acpResponseParts for a finished prompt: a refusal may legitimately come with no text.
-func acpAnswerParts(raw string, result acp.PromptResponse) ([]*genai.Part, error) {
-	parts, err := acpResponseParts(raw)
-	if errors.Is(err, errEmptyACPAnswer) && result.StopReason == acp.StopReasonRefusal {
-		return nil, nil
+// parseAnswer parses the JSON envelope the prompt asks for, and reports whether the answer was exactly one envelope. An answer that is not JSON at all is passed through as text, since a readable answer beats an error. Models sometimes write more than one object, typically the same tool call twice; the objects are read in order, their texts joined, and only the first tool call is kept, because a second, different one comes from a model that lost track and running it could do something nobody asked for. Such an answer, and one that is not JSON, is not exact: the session that wrote it is not reused, since a model that sees its own malformed answer tends to repeat it.
+func parseAnswer(raw string) ([]*genai.Part, bool, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false, errEmptyACPAnswer
 	}
-	return parts, err
+	clean := stripCodeFence(raw)
+	envelopes, complete := decodeEnvelopes(clean)
+	if len(envelopes) == 0 {
+		// Models sometimes put literal newlines or tabs inside JSON strings; accept those before giving up on the envelope.
+		envelopes, complete = decodeEnvelopes(escapeControlInStrings(clean))
+	}
+	if len(envelopes) == 0 {
+		acpLogger.Warn("Antigravity answered without the JSON envelope; passing it on as text")
+		return []*genai.Part{{Text: raw}}, false, nil
+	}
+	exact := complete && len(envelopes) == 1
+	var texts []string
+	var call *genai.Part
+	for _, envelope := range envelopes {
+		if envelope.Text != "" && !slices.Contains(texts, envelope.Text) {
+			texts = append(texts, envelope.Text)
+		}
+		if envelope.ToolUse == nil {
+			continue
+		}
+		if strings.TrimSpace(envelope.ToolUse.Name) == "" {
+			return nil, false, errors.New("Antigravity ACP returned a tool call without a name")
+		}
+		var input map[string]any
+		if len(envelope.ToolUse.Input) > 0 && string(envelope.ToolUse.Input) != "null" {
+			if err := json.Unmarshal(envelope.ToolUse.Input, &input); err != nil {
+				return nil, false, fmt.Errorf("decode Antigravity ACP tool call: %w", err)
+			}
+		}
+		if call == nil {
+			call = &genai.Part{FunctionCall: &genai.FunctionCall{ID: "acp_tool_" + rand.Text(), Name: envelope.ToolUse.Name, Args: input}}
+			continue
+		}
+		if call.FunctionCall.Name != envelope.ToolUse.Name || !sameJSON(call.FunctionCall.Args, input) {
+			acpLogger.Warn("Antigravity answered with more than one tool call; only the first is run", "first", call.FunctionCall.Name, "dropped", envelope.ToolUse.Name)
+		}
+	}
+	if len(envelopes) > 1 {
+		acpLogger.Warn("Antigravity answered with more than one JSON object; they were merged", "objects", len(envelopes))
+	}
+	var parts []*genai.Part
+	if len(texts) > 0 {
+		parts = append(parts, &genai.Part{Text: strings.Join(texts, "\n\n")})
+	}
+	if call != nil {
+		parts = append(parts, call)
+	}
+	if len(parts) == 0 {
+		return nil, false, errors.New("Antigravity ACP returned neither text nor a tool call")
+	}
+	return parts, exact, nil
+}
+
+// decodeEnvelopes reads the JSON objects at the start of s, one after another. complete is false when something other than another object follows them.
+func decodeEnvelopes(s string) ([]acpEnvelope, bool) {
+	decoder := json.NewDecoder(strings.NewReader(s))
+	var envelopes []acpEnvelope
+	for {
+		var envelope acpEnvelope
+		err := decoder.Decode(&envelope)
+		if errors.Is(err, io.EOF) {
+			return envelopes, true
+		}
+		if err != nil {
+			return envelopes, false
+		}
+		envelopes = append(envelopes, envelope)
+	}
+}
+
+// sameJSON reports whether two decoded values encode to the same JSON; map keys are encoded in sorted order.
+func sameJSON(a, b any) bool {
+	x, errX := json.Marshal(a)
+	y, errY := json.Marshal(b)
+	return errX == nil && errY == nil && string(x) == string(y)
+}
+
+// acpAnswerParts is parseAnswer for a finished prompt: a refusal may legitimately come with no text.
+func acpAnswerParts(raw string, result acp.PromptResponse) ([]*genai.Part, bool, error) {
+	parts, exact, err := parseAnswer(raw)
+	if errors.Is(err, errEmptyACPAnswer) && result.StopReason == acp.StopReasonRefusal {
+		return nil, false, nil
+	}
+	return parts, exact, err
 }
 
 func stripCodeFence(raw string) string {
@@ -210,15 +387,24 @@ func acpFinalResponse(parts []*genai.Part, result acp.PromptResponse) *genai.Gen
 	}}}
 	if u := result.Usage; u != nil {
 		meta := &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:     int32(u.InputTokens),
+			PromptTokenCount:     int32(promptTokens(u)),
 			CandidatesTokenCount: int32(u.OutputTokens),
 		}
 		if u.CachedReadTokens != nil {
-			meta.CachedContentTokenCount = int32(min(*u.CachedReadTokens, u.InputTokens))
+			meta.CachedContentTokenCount = int32(*u.CachedReadTokens)
 		}
 		resp.UsageMetadata = meta
 	}
 	return resp
+}
+
+// promptTokens is the whole prompt agy read. Its inputTokens leave out the tokens read from cache, which in a continued session are most of the conversation; Gemini's prompt token count, which Claude Code sizes its context from, includes them.
+func promptTokens(u *acp.Usage) int64 {
+	tokens := u.InputTokens
+	if u.CachedReadTokens != nil {
+		tokens += *u.CachedReadTokens
+	}
+	return tokens
 }
 
 // ---- streaming ----
@@ -235,7 +421,7 @@ const (
 	envelopeUndecided envelopeMode = iota
 	// envelopeText streams the decoded string value of a {"text": ...} answer.
 	envelopeText
-	// envelopePlain streams an answer that ignored the JSON format verbatim, exactly as acpResponseParts would return it.
+	// envelopePlain streams an answer that ignored the JSON format verbatim, exactly as parseAnswer would return it.
 	envelopePlain
 	// envelopeBuffered holds the answer (a tool call, or a JSON shape that cannot be streamed safely) until the prompt ends.
 	envelopeBuffered
@@ -249,6 +435,8 @@ type envelopeDecoder struct {
 	mode    envelopeMode
 	pos     int
 	emitted strings.Builder
+	answer  []*genai.Part
+	exact   bool
 }
 
 // feed adds a chunk and returns the text that can be shown now.
@@ -349,9 +537,10 @@ func decodeJSONStringBody(body string) (string, error) {
 	return text, err
 }
 
-// finish parses the complete answer and returns the parts not streamed yet: the rest of the text, if any, and a tool call.
+// finish parses the complete answer and returns the parts not streamed yet: the rest of the text, if any, and a tool call. The whole answer is kept in answer, and exact reports whether it was one envelope.
 func (d *envelopeDecoder) finish(result acp.PromptResponse) ([]*genai.Part, error) {
-	parts, err := acpAnswerParts(d.raw.String(), result)
+	parts, exact, err := acpAnswerParts(d.raw.String(), result)
+	d.answer, d.exact = parts, exact
 	if err != nil || d.emitted.Len() == 0 {
 		return parts, err
 	}

@@ -65,7 +65,7 @@
   "row_tokens": "token 用量和 <code>count_tokens</code>",
   "tokens_api": "会上报；在 Developer API 上为估算值",
   "tokens_acp": "会上报，包括约 14k token 的 <code>agy</code> 指令",
-  "compat_note": "两种方式都不支持：web 搜索、代码执行等服务端工具，URL 形式的图片和文档来源，以及 Claude thinking 块。完整的接口约定见 <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>。",
+  "compat_note": "两种方式都不支持：代码执行等服务端工具，URL 形式的图片和文档来源，以及 Claude thinking 块。Claude Code 的 WebSearch 在用 Google 登录（Antigravity）时可用，由 Google 搜索；用 Gemini API key 时不可用。完整的接口约定见 <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>。",
   "cmds_title": "插件命令",
   "cmds_sub": "修改路由后对新会话生效；当前会话会保持原来的连接。",
   "cmd_login": "通过 Antigravity OAuth 登录，并启用当前项目的路由",

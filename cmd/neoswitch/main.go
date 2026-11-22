@@ -54,6 +54,10 @@ func main() {
 		err = attach(os.Args[2:])
 	case "daemon":
 		err = runDaemon()
+	case provider.AgyHookCommand:
+		// agy's tool guard: see provider/acp_guard.go. It never fails: anything wrong is a deny.
+		_ = provider.RunAgyHook(os.Args[2:], os.Stdin, os.Stdout)
+		return
 	case "update-check":
 		err = updateCheckCommand()
 	case "version", "--version":

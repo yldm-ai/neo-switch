@@ -65,7 +65,7 @@
   "row_tokens": "토큰 사용량, <code>count_tokens</code>",
   "tokens_api": "보고됨. Developer API에서는 추정값",
   "tokens_acp": "보고됨. 약 14k 토큰의 <code>agy</code> 지시문 포함",
-  "compat_note": "두 방식 모두 지원하지 않는 기능: 웹 검색이나 코드 실행 같은 서버 도구, URL 이미지 및 문서 소스, Claude thinking 블록. 전체 계약은 <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>에 있습니다.",
+  "compat_note": "두 방식 모두 지원하지 않는 기능: 코드 실행 같은 서버 도구, URL 이미지 및 문서 소스, Claude thinking 블록. Claude Code의 WebSearch는 Google 로그인(Antigravity)에서는 Google로 검색해 동작하지만, Gemini API 키로는 동작하지 않습니다. 전체 계약은 <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>에 있습니다.",
   "cmds_title": "플러그인 명령",
   "cmds_sub": "라우팅 변경은 새 세션에 적용됩니다. 현재 세션은 기존 연결을 유지합니다.",
   "cmd_login": "Antigravity OAuth로 로그인하고 이 프로젝트의 라우트 활성화",

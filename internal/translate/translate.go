@@ -19,6 +19,52 @@ type Request struct {
 	Config   *genai.GenerateContentConfig
 	// ThinkingLevel is the request's effort mapped onto Gemini's thinking levels, empty when the request names none or an effort NeoSwitch does not know. It is kept out of Config so each backend decides whether to apply it: the Antigravity ACP route selects agy's thought level from it, and the Gemini API route sends it as thinkingConfig.thinkingLevel, dropping it for the rest of the backend's life if the model rejects it, because per-model support for each level has not been verified against the live API.
 	ThinkingLevel genai.ThinkingLevel
+	// WebSearch is set when the request offers nothing but Anthropic's web search server tool, which is how Claude Code's WebSearch tool asks for one search. A backend that can search answers it with its own search (server.WebSearcher); for the others it stays unsupported (WebSearchUnsupported).
+	WebSearch *WebSearch
+	// Origin is who in Claude Code sent the request, empty when Claude Code did not say. Backends that keep state per conversation use it to tell the main thread from requests that share its history; the Gemini API route, which keeps none, ignores it.
+	Origin Origin
+}
+
+// WebSearch is the configuration of a web search request.
+type WebSearch struct {
+	AllowedDomains []string
+	BlockedDomains []string
+	// MaxUses is how many searches the request allows, 0 for no limit.
+	MaxUses int
+}
+
+// SearchResult is what a web search found, for the response NeoSwitch builds in the shape of Anthropic's web search server tool.
+type SearchResult struct {
+	// Queries are the searches run, in order.
+	Queries []string
+	Links   []SearchLink
+	// Summary is the searching model's account of the results, "" when there is none.
+	Summary string
+	// ErrorCode is set when the search failed in a way Claude Code reports as a web search error: "unavailable" or "max_uses_exceeded".
+	ErrorCode string
+	Usage     *genai.GenerateContentResponseUsageMetadata
+}
+
+// SearchLink is one page a search found.
+type SearchLink struct {
+	Title, URL string
+}
+
+// WebSearchUnsupported is the error for a web search request on a backend that cannot search.
+func WebSearchUnsupported() *UnsupportedError {
+	return unsupportedServerTool("web_search").(*UnsupportedError)
+}
+
+// Origin is what Claude Code's hint headers say about a request. It sends them only when CLAUDE_CODE_GATEWAY_HINT_HEADERS is set, which NeoSwitch does for the projects it switches.
+type Origin struct {
+	// Session is the Claude Code session (X-Claude-Code-Session-Id).
+	Session string
+	// Class is main, subagent, workflow, compaction, auxiliary or side_reply (x-claude-code-request-class).
+	Class string
+	// Kind narrows a background request down, such as followup-generation or summary-extraction (x-claude-1p-request-class).
+	Kind string
+	// Agent is the subagent or workflow agent that sent the request (x-claude-code-agent-id).
+	Agent string
 }
 
 // thinkingLevels maps Claude Code's effort onto Gemini's thinking levels. Gemini has no level above XHIGH, so max shares it.
@@ -59,11 +105,14 @@ func ToGemini(in anthropic.MessagesRequest) (Request, error) {
 	}
 	config.SystemInstruction = system
 
-	if config.Tools, err = tools(in.Tools); err != nil {
-		return Request{}, err
-	}
-	if config.ToolConfig, err = toolConfig(in.ToolChoice); err != nil {
-		return Request{}, err
+	search := soleWebSearch(in.Tools)
+	if search == nil {
+		if config.Tools, err = tools(in.Tools); err != nil {
+			return Request{}, err
+		}
+		if config.ToolConfig, err = toolConfig(in.ToolChoice); err != nil {
+			return Request{}, err
+		}
 	}
 
 	calls := map[string]toolCall{}
@@ -114,7 +163,7 @@ func ToGemini(in anthropic.MessagesRequest) (Request, error) {
 	if len(contents) == 0 {
 		return Request{}, fmt.Errorf("messages contain no content Gemini can accept")
 	}
-	out := Request{Contents: contents, Config: config}
+	out := Request{Contents: contents, Config: config, WebSearch: search}
 	if in.OutputConfig != nil {
 		// An unknown effort is a hint NeoSwitch cannot map, not an invalid request: newer Claude Code versions may add levels.
 		out.ThinkingLevel = thinkingLevels[strings.ToLower(strings.TrimSpace(in.OutputConfig.Effort))]
@@ -152,6 +201,14 @@ func systemParts(raw json.RawMessage) ([]*genai.Part, error) {
 		}
 	}
 	return parts, nil
+}
+
+// soleWebSearch returns the web search configuration of a request whose only tool is Anthropic's web search server tool, and nil otherwise. A web search offered next to other tools stays unsupported: the model would have to choose between them, and only Anthropic's API runs that tool inside a turn.
+func soleWebSearch(in []anthropic.Tool) *WebSearch {
+	if len(in) != 1 || !strings.HasPrefix(in[0].Type, "web_search_") {
+		return nil
+	}
+	return &WebSearch{AllowedDomains: in[0].AllowedDomains, BlockedDomains: in[0].BlockedDomains, MaxUses: in[0].MaxUses}
 }
 
 func tools(in []anthropic.Tool) ([]*genai.Tool, error) {
@@ -339,12 +396,12 @@ func mediaPart(block anthropic.ContentBlock) (*genai.Part, error) {
 // unsupportedServerTool explains that a tool Anthropic runs on its own servers, such as web search, does not exist on the model NeoSwitch routes to.
 func unsupportedServerTool(typ string) error {
 	if strings.HasPrefix(typ, "web_search") {
-		return &UnsupportedError{Message: "Web search (WebSearch) does not work with NeoSwitch. Ask without web search, or run /neoswitch:off and start a new session to use Claude for it."}
+		return &UnsupportedError{Message: "Web search (WebSearch) does not work with NeoSwitch on a Gemini API key. Sign in with /neoswitch:login to search with Google through Antigravity, ask without web search, or run /neoswitch:off to continue this session on Claude."}
 	}
 	if strings.HasPrefix(typ, "web_fetch") {
-		return &UnsupportedError{Message: "Fetching web pages with Claude's built-in web fetch does not work with NeoSwitch. Ask without it, or run /neoswitch:off and start a new session to use Claude for it."}
+		return &UnsupportedError{Message: "Fetching web pages with Claude's built-in web fetch does not work with NeoSwitch. Ask without it, or run /neoswitch:off to continue this session on Claude."}
 	}
-	return &UnsupportedError{Message: fmt.Sprintf("Claude's built-in %q tool does not work with NeoSwitch. Ask without it, or run /neoswitch:off and start a new session to use Claude for it.", typ)}
+	return &UnsupportedError{Message: fmt.Sprintf("Claude's built-in %q tool does not work with NeoSwitch. Ask without it, or run /neoswitch:off to continue this session on Claude.", typ)}
 }
 
 // toolResultContent splits Anthropic tool_result content into the text Gemini receives in functionResponse.response and the images it receives as multimodal functionResponse parts.

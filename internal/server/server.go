@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,11 @@ type Backend interface {
 	Generate(context.Context, translate.Request) (*genai.GenerateContentResponse, error)
 	Stream(context.Context, translate.Request) iter.Seq2[*genai.GenerateContentResponse, error]
 	CountTokens(context.Context, translate.Request) (int, error)
+}
+
+// WebSearcher is a backend that can run a web search itself, which answers Claude Code's WebSearch tool. onQuery is called with each query as the search runs it, on the caller's goroutine.
+type WebSearcher interface {
+	SearchWeb(ctx context.Context, req translate.Request, onQuery func(string)) (translate.SearchResult, error)
 }
 
 type Config struct {
@@ -56,6 +62,10 @@ func NewHandler(config Config) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		defer cancel()
+		if translated.WebSearch != nil {
+			searchWeb(ctx, w, config.Backend, translated, request)
+			return
+		}
 		if request.Stream {
 			streamMessage(ctx, w, config.Backend, translated, request.Model)
 			return
@@ -97,7 +107,7 @@ func decode(w http.ResponseWriter, r *http.Request, config Config) (anthropic.Me
 		return anthropic.MessagesRequest{}, translate.Request{}, false
 	}
 	if config.Backend == nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "NeoSwitch has no model to answer with. Run /neoswitch:login, or run /neoswitch:off and start a new session to go back to Claude.")
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", "NeoSwitch has no model to answer with. Run /neoswitch:login, or run /neoswitch:off to continue this session on Claude.")
 		return anthropic.MessagesRequest{}, translate.Request{}, false
 	}
 	var request anthropic.MessagesRequest
@@ -116,6 +126,12 @@ func decode(w http.ResponseWriter, r *http.Request, config Config) (anthropic.Me
 		}
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", message)
 		return anthropic.MessagesRequest{}, translate.Request{}, false
+	}
+	translated.Origin = translate.Origin{
+		Session: r.Header.Get("X-Claude-Code-Session-Id"),
+		Class:   r.Header.Get("X-Claude-Code-Request-Class"),
+		Kind:    r.Header.Get("X-Claude-1p-Request-Class"),
+		Agent:   r.Header.Get("X-Claude-Code-Agent-Id"),
 	}
 	return request, translated, true
 }
@@ -146,6 +162,10 @@ func upstreamStatus(err error) (int, string, string) {
 	if errors.As(err, &retryable) {
 		return 529, "overloaded_error", retryable.Message
 	}
+	var rateLimited *translate.RateLimitError
+	if errors.As(err, &rateLimited) {
+		return http.StatusTooManyRequests, "rate_limit_error", rateLimited.Message
+	}
 	var apiErr genai.APIError
 	if errors.As(err, &apiErr) {
 		message := "upstream returned HTTP " + fmt.Sprint(apiErr.Code) + ": " + apiErr.Message
@@ -160,7 +180,7 @@ func upstreamStatus(err error) (int, string, string) {
 			}
 			return http.StatusBadRequest, "invalid_request_error", message
 		case apiErr.Code == http.StatusUnauthorized || apiErr.Code == http.StatusForbidden:
-			return http.StatusBadRequest, "invalid_request_error", "The model's provider refused the credentials NeoSwitch uses for it (" + message + "). Check that API key or account, then start a new Claude Code session, or run /neoswitch:off and start a new session to go back to Claude."
+			return http.StatusBadRequest, "invalid_request_error", "The model's provider refused the credentials NeoSwitch uses for it (" + message + "). Check that API key or account, then start a new Claude Code session, or run /neoswitch:off to continue this session on Claude."
 		case apiErr.Code == http.StatusNotFound:
 			return http.StatusNotFound, "not_found_error", message
 		case apiErr.Code == http.StatusRequestEntityTooLarge:
@@ -357,4 +377,105 @@ func (s *sseWriter) event(name string, value any) {
 	if s.flusher != nil {
 		s.flusher.Flush()
 	}
+}
+
+// ---- web search ----
+
+// searchWeb answers a request for Anthropic's web search server tool with the backend's own search, in the blocks that tool returns: a server_tool_use per query, a web_search_tool_result with the pages found, and the summary as text. Claude Code's WebSearch tool reads exactly these. A streamed answer starts with the first query, so Claude Code shows the search as it runs; a failure before that keeps its HTTP status.
+func searchWeb(ctx context.Context, w http.ResponseWriter, backend Backend, req translate.Request, request anthropic.MessagesRequest) {
+	searcher, ok := backend.(WebSearcher)
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", translate.WebSearchUnsupported().Message)
+		return
+	}
+	var ids []string
+	var stream *sseWriter
+	begin := func() {
+		if stream == nil {
+			stream = &sseWriter{w: w, model: request.Model}
+			stream.flusher, _ = w.(http.Flusher)
+			stream.start(&genai.GenerateContentResponse{})
+		}
+	}
+	onQuery := func(query string) {
+		ids = append(ids, "srvtoolu_ns_"+rand.Text())
+		if !request.Stream {
+			return
+		}
+		begin()
+		stream.serverToolUse(ids[len(ids)-1], query)
+	}
+	result, err := searcher.SearchWeb(ctx, req, onQuery)
+	if err != nil {
+		if stream != nil {
+			stream.fail(err)
+			return
+		}
+		writeUpstreamError(w, err)
+		return
+	}
+	for len(ids) < len(result.Queries) {
+		ids = append(ids, "srvtoolu_ns_"+rand.Text())
+	}
+	toolUseID := "srvtoolu_ns_" + rand.Text()
+	if len(ids) > 0 {
+		toolUseID = ids[len(ids)-1]
+	}
+	found := searchResultBlock(result, toolUseID)
+	usage := translate.Usage(result.Usage)
+	usage.ServerToolUse = &anthropic.ServerToolUsage{WebSearchRequests: len(result.Queries)}
+	if !request.Stream {
+		var content []anthropic.ContentBlock
+		for i, query := range result.Queries {
+			input, _ := json.Marshal(map[string]string{"query": query})
+			content = append(content, anthropic.ContentBlock{Type: "server_tool_use", ID: ids[i], Name: "web_search", Input: input})
+		}
+		content = append(content, found)
+		if result.Summary != "" {
+			content = append(content, anthropic.ContentBlock{Type: "text", Text: result.Summary})
+		}
+		writeJSON(w, http.StatusOK, anthropic.Response{
+			ID: translate.NewMessageID(), Type: "message", Role: "assistant", Model: request.Model,
+			Content: content, StopReason: "end_turn", Usage: usage,
+		})
+		return
+	}
+	begin()
+	// The result arrives whole in content_block_start, as Anthropic sends it.
+	stream.event("content_block_start", map[string]any{"type": "content_block_start", "index": stream.index, "content_block": found})
+	stream.event("content_block_stop", map[string]any{"type": "content_block_stop", "index": stream.index})
+	stream.index++
+	if result.Summary != "" {
+		stream.event("content_block_start", map[string]any{"type": "content_block_start", "index": stream.index, "content_block": map[string]any{"type": "text", "text": ""}})
+		stream.event("content_block_delta", map[string]any{"type": "content_block_delta", "index": stream.index, "delta": map[string]any{"type": "text_delta", "text": result.Summary}})
+		stream.event("content_block_stop", map[string]any{"type": "content_block_stop", "index": stream.index})
+		stream.index++
+	}
+	stream.event("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": usage})
+	stream.event("message_stop", map[string]any{"type": "message_stop"})
+}
+
+// serverToolUse emits a complete server_tool_use block the way Anthropic streams one: empty input at the start, then the input as one JSON delta.
+func (s *sseWriter) serverToolUse(id, query string) {
+	input, _ := json.Marshal(map[string]string{"query": query})
+	s.event("content_block_start", map[string]any{"type": "content_block_start", "index": s.index, "content_block": map[string]any{"type": "server_tool_use", "id": id, "name": "web_search", "input": map[string]any{}}})
+	s.event("content_block_delta", map[string]any{"type": "content_block_delta", "index": s.index, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
+	s.event("content_block_stop", map[string]any{"type": "content_block_stop", "index": s.index})
+	s.index++
+}
+
+// searchResultBlock is the web_search_tool_result block for a search: the pages found, or the error Claude Code reports as "Web search error: <code>".
+func searchResultBlock(result translate.SearchResult, toolUseID string) anthropic.ContentBlock {
+	var content any
+	if result.ErrorCode != "" {
+		content = map[string]string{"type": "web_search_tool_result_error", "error_code": result.ErrorCode}
+	} else {
+		pages := make([]map[string]any, 0, len(result.Links))
+		for _, link := range result.Links {
+			pages = append(pages, map[string]any{"type": "web_search_result", "title": link.Title, "url": link.URL, "encrypted_content": "", "page_age": nil})
+		}
+		content = pages
+	}
+	encoded, _ := json.Marshal(content)
+	return anthropic.ContentBlock{Type: "web_search_tool_result", ToolUseID: toolUseID, Content: encoded}
 }

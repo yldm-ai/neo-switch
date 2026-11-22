@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -196,7 +197,7 @@ func TestToGeminiRejectsWhatItCannotRepresent(t *testing.T) {
 	cases := map[string]string{
 		"unknown block":       `{"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"future_block"}]}]}`,
 		"unknown tool_use_id": `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"nope","content":"x"}]}]}`,
-		"server tool":         `{"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"a"}]}`,
+		"server tool":         `{"tools":[{"type":"web_search_20250305","name":"web_search"},{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"a"}]}`,
 		"url image":           `{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}`,
 		"bad base64":          `{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"%%%"}}]}]}`,
 		"tool_use from user":  `{"messages":[{"role":"user","content":[{"type":"tool_use","id":"t","name":"x","input":{}}]}]}`,
@@ -215,7 +216,7 @@ func TestToGeminiRejectsWhatItCannotRepresent(t *testing.T) {
 
 func TestToGeminiExplainsUnsupportedFeaturesPlainly(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
-		"web search":    {`{"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"a"}]}`, "Web search (WebSearch) does not work with NeoSwitch"},
+		"web search":    {`{"tools":[{"type":"web_search_20250305","name":"web_search"},{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"a"}]}`, "Web search (WebSearch) does not work with NeoSwitch"},
 		"other server":  {`{"tools":[{"type":"code_execution_20250522","name":"code_execution"}],"messages":[{"role":"user","content":"a"}]}`, `"code_execution_20250522" tool does not work with NeoSwitch`},
 		"url image":     {`{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]}`, "cannot send images given as web links"},
 		"url in result": {`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"document","source":{"type":"url","url":"https://example.com/a.pdf"}}]}]}]}`, "cannot send documents given as web links"},
@@ -230,6 +231,24 @@ func TestToGeminiExplainsUnsupportedFeaturesPlainly(t *testing.T) {
 				t.Fatalf("message %q must contain %q and no field path", unsupported.Message, tc.want)
 			}
 		})
+	}
+}
+
+// Claude Code's WebSearch tool sends a request whose only tool is the web search server tool, with tool_choice forcing it. It becomes a web search request for a backend that can search.
+func TestToGeminiRecognizesAWebSearchRequest(t *testing.T) {
+	got, err := ToGemini(mustDecode(t, `{"tools":[{"type":"web_search_20250305","name":"web_search","allowed_domains":["go.dev"],"blocked_domains":["example.com"],"max_uses":8}],"tool_choice":{"type":"tool","name":"web_search"},"messages":[{"role":"user","content":"Perform a web search for the query: go 1.24"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := WebSearch{AllowedDomains: []string{"go.dev"}, BlockedDomains: []string{"example.com"}, MaxUses: 8}
+	if got.WebSearch == nil || !reflect.DeepEqual(*got.WebSearch, want) {
+		t.Fatalf("web search = %+v", got.WebSearch)
+	}
+	if got.Config.Tools != nil || got.Config.ToolConfig != nil {
+		t.Fatalf("a web search request must not offer the model a function: %+v %+v", got.Config.Tools, got.Config.ToolConfig)
+	}
+	if plain, _ := ToGemini(mustDecode(t, `{"messages":[{"role":"user","content":"a"}]}`)); plain.WebSearch != nil {
+		t.Fatal("a request without the server tool is not a web search")
 	}
 }
 

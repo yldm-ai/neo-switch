@@ -24,6 +24,11 @@ import (
 const fakeACPEnv = "NEOSWITCH_FAKE_ACP"
 
 func TestMain(m *testing.M) {
+	// The tool guard's hook is a copy of this binary, so tests can run it as agy does.
+	if len(os.Args) > 1 && os.Args[1] == AgyHookCommand {
+		_ = RunAgyHook(os.Args[2:], os.Stdin, os.Stdout)
+		os.Exit(0)
+	}
 	if mode := os.Getenv(fakeACPEnv); mode != "" {
 		if slices.Contains(os.Args, "--login") {
 			runFakeTerminalSignIn(mode)
@@ -83,6 +88,12 @@ const (
 //   - auth-required, rpc-error: prompts fail with the ACP auth_required error, or with an internal JSON-RPC error
 //   - signed-out: sessions cannot be created, failing with the ACP auth_required error as a signed-out agy does
 //   - browser-wait: authenticate never answers, as a browser sign-in nobody finishes
+//   - history: answers "<session> <prompts in the session> <prompt bytes>", or "ok" to a part of a split conversation
+//   - tool-guarded, tool-unguarded: reports a tool call of agy's own, with or without the tool guard's decision recorded, then answers "done"
+//   - search, search-twice: reports one or two web searches as tool calls, then answers with searchAnswerJSON; search-none answers the same without searching
+//   - quota, rate-limit, too-long: prompts fail with an internal JSON-RPC error whose message or data says why, as agy reports Google's refusals
+//
+// Every mode refuses a prompt longer than the 192,000 bytes agy reads.
 func runFakeACP(mode string) {
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 64<<10), 32<<20)
@@ -104,6 +115,8 @@ func runFakeACP(mode string) {
 		hung       *prompt
 		cancelled  bool
 		levels     = map[string]string{}
+		// sessionPrompts counts the prompts each session has received.
+		sessionPrompts = map[string]int{}
 	)
 	update := func(sid, kind, text string) {
 		send(map[string]any{"method": "session/update", "params": map[string]any{
@@ -111,7 +124,21 @@ func runFakeACP(mode string) {
 			"update":    map[string]any{"sessionUpdate": kind, "content": map[string]string{"type": "text", "text": text}},
 		}})
 	}
-	usage := map[string]any{"inputTokens": 20000, "outputTokens": 20, "cachedReadTokens": 30, "totalTokens": 20020}
+	// toolCall reports a tool call of agy's own, recording the tool guard's decision first when guarded, as agy runs the hook before the tool.
+	toolCall := func(sid, id, kind string, input any, guarded bool) {
+		if guarded {
+			_ = os.MkdirAll(guardRecords, 0o700)
+			if f, err := os.OpenFile(filepath.Join(guardRecords, sid), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+				fmt.Fprintf(f, "deny %s\n", kind)
+				f.Close()
+			}
+		}
+		send(map[string]any{"method": "session/update", "params": map[string]any{"sessionId": sid, "update": map[string]any{
+			"sessionUpdate": "tool_call", "toolCallId": id, "title": kind, "kind": kind, "status": "in_progress", "rawInput": input,
+		}}})
+	}
+	// Like agy, inputTokens leave out the tokens read from cache: the prompt was 20000 tokens.
+	usage := map[string]any{"inputTokens": 19970, "outputTokens": 20, "cachedReadTokens": 30, "totalTokens": 20020}
 	askPermission := func(p prompt) {
 		permission["perm-"+p.sid] = p
 		send(map[string]any{"id": "perm-" + p.sid, "method": "session/request_permission", "params": map[string]any{
@@ -162,6 +189,7 @@ func runFakeACP(mode string) {
 				Type     string `json:"type"`
 				MimeType string `json:"mimeType"`
 				Data     string `json:"data"`
+				Text     string `json:"text"`
 			} `json:"prompt"`
 		}
 		_ = json.Unmarshal(msg.Params, &params)
@@ -262,7 +290,9 @@ func runFakeACP(mode string) {
 			}
 		case "session/prompt":
 			var types []string
+			text := ""
 			for _, block := range params.Prompt {
+				text += block.Text
 				if block.Type == "image" {
 					types = append(types, "image:"+block.MimeType+":"+block.Data)
 					continue
@@ -272,6 +302,12 @@ func runFakeACP(mode string) {
 			summary, _ := json.Marshal(map[string]string{"text": strings.Join(types, ",")})
 			p := prompt{id: msg.ID, sid: params.SessionID, answer: string(summary)}
 			prompts++
+			sessionPrompts[p.sid]++
+			// agy keeps only the first 192,000 bytes of a prompt; the fake refuses longer ones, so a test that sends one fails instead of losing the end silently.
+			if len(text) > 192_000 {
+				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32603, "message": "prompt over agy's limit"}})
+				continue
+			}
 			switch mode {
 			case "auth-required":
 				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32000, "message": "Authentication required"}})
@@ -279,6 +315,32 @@ func runFakeACP(mode string) {
 			case "rpc-error":
 				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32603, "message": "Internal error", "data": map[string]string{"error": "boom"}}})
 				continue
+			case "quota":
+				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32603, "message": "Internal error", "data": map[string]string{"error": "You have exhausted your quota on this model. Your quota resets in 4h."}}})
+				continue
+			case "rate-limit":
+				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32603, "message": "RESOURCE_EXHAUSTED: rate limit exceeded"}})
+				continue
+			case "too-long":
+				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32603, "message": "The input exceeds the maximum number of tokens allowed"}})
+				continue
+			case "search", "search-twice", "search-none":
+				// agy reports each search as a tool call of kind search with its query; the answer lists the pages.
+				searches := map[string]int{"search": 1, "search-twice": 2}[mode]
+				for i := 1; i <= searches; i++ {
+					toolCall(p.sid, fmt.Sprintf("call%d", i), "search", map[string]string{"query": fmt.Sprintf("query %d", i)}, true)
+				}
+				p.answer = searchAnswerJSON
+			case "tool-guarded", "tool-unguarded":
+				// agy ran one of its own tools, with or without asking the tool guard first.
+				toolCall(p.sid, "call1", "read", map[string]string{"Path": "/etc/hosts"}, mode == "tool-guarded")
+				p.answer = `{"text":"done"}`
+			case "history":
+				// The session, how many prompts it has received, and the length of this one; earlier parts of a split conversation say "ok".
+				p.answer = fmt.Sprintf(`{"text":"%s %d %d"}`, p.sid, sessionPrompts[p.sid], len(text))
+				if strings.Contains(text, "Do not answer it yet") {
+					p.answer = `{"text":"ok"}`
+				}
 			case "exit":
 				os.Exit(1)
 			case "hang":
@@ -778,7 +840,7 @@ func TestACPPromptMarksAttachments(t *testing.T) {
 }
 
 func TestACPResponsePartsText(t *testing.T) {
-	parts, err := acpResponseParts(`{"text":"hello"}`)
+	parts, _, err := parseAnswer(`{"text":"hello"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -788,7 +850,7 @@ func TestACPResponsePartsText(t *testing.T) {
 }
 
 func TestACPResponsePartsToolUse(t *testing.T) {
-	parts, err := acpResponseParts(`{"tool_use":{"name":"Read","input":{"file_path":"/tmp/a"}}}`)
+	parts, _, err := parseAnswer(`{"tool_use":{"name":"Read","input":{"file_path":"/tmp/a"}}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -801,7 +863,7 @@ func TestACPResponsePartsToolUse(t *testing.T) {
 }
 
 func TestACPResponsePartsKeepsTextBeforeToolUse(t *testing.T) {
-	parts, err := acpResponseParts(`{"text":"Reading it.","tool_use":{"name":"Read","input":{}}}`)
+	parts, _, err := parseAnswer(`{"text":"Reading it.","tool_use":{"name":"Read","input":{}}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +873,7 @@ func TestACPResponsePartsKeepsTextBeforeToolUse(t *testing.T) {
 }
 
 func TestACPResponsePartsAcceptsRawNewlinesInStrings(t *testing.T) {
-	parts, err := acpResponseParts("{\n  \"text\": \"line one\nline two\"\n}")
+	parts, _, err := parseAnswer("{\n  \"text\": \"line one\nline two\"\n}")
 	if err != nil {
 		t.Fatal(err)
 	}
