@@ -382,7 +382,7 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 	if ok {
 		info, running = daemon.StatusOf(state, currentSession().id)
 	}
-	session := info.OptedIn
+	session := info.OptedIn && !gatewayModeOn()
 	switch {
 	case !session && through && !running:
 		fmt.Fprintln(w, "This session's requests go through NeoSwitch, which is not running, so it cannot answer.")
@@ -483,11 +483,19 @@ func attach(args []string) error {
 	if err != nil || !ok {
 		return nil
 	}
+	// Versions up to 0.4.1 turned gateway mode off for the whole project, which sends sessions started through a gateway to Anthropic with the gateway's credential. This session already applied the override and keeps it until it closes; removing it fixes the sessions that start afterwards.
+	leftover := ""
+	if path, err := projectDir(nil); err == nil {
+		if cleared, _ := daemon.ClearGatewayOverride(projectKey(path), state); cleared {
+			leftover = "NeoSwitch: an earlier version turned off gateway mode for this project, so sessions started through a gateway, such as `everyapi use claude`, could not reach it. New sessions reach their gateway again; if this session was started through one, close it and start it again."
+		}
+	}
 	base := os.Getenv("ANTHROPIC_BASE_URL")
 	opted := false
 	if *session != "" {
 		info, _ := daemon.StatusOf(state, *session)
-		opted = info.OptedIn
+		// /neoswitch:on refuses gateway sessions, and a gateway session's requests never reach NeoSwitch, so an opt-in left from before, such as of a session resumed through a gateway, does not make it use Gemini.
+		opted = info.OptedIn && !gatewayModeOn()
 	}
 	// A gateway session keeps the gateway's ANTHROPIC_BASE_URL whatever the project settings, which are applied to this hook's environment, say: its requests never reach NeoSwitch, so there is nothing to attach or announce.
 	routed := base == state.BaseURL() && !gatewayModeOn()
@@ -536,6 +544,10 @@ func attach(args []string) error {
 		return nil
 	}
 	if !opted {
+		if leftover != "" {
+			// Whether this session was started through a gateway is hidden by the override it applied, so the usual line about how it reaches Claude may be wrong.
+			return message(joinNotes(leftover, updateNotice(dir)))
+		}
 		return message(joinNotes("NeoSwitch: another session in this project uses Gemini, so this one reaches Claude through NeoSwitch, unchanged. Run /neoswitch:on to switch this one to Gemini too.", updateNotice(dir)))
 	}
 	_, model, label, err := configuredBackend(context.Background())
@@ -543,7 +555,7 @@ func attach(args []string) error {
 		return message(sessionBlocked(err.Error()))
 	}
 	info, running := daemon.Status(state)
-	return message(joinNotes(attachNotice("", model, label, info, running, true), updateNotice(dir)))
+	return message(joinNotes(attachNotice("", model, label, info, running, true), leftover, updateNotice(dir)))
 }
 
 // legacyRoute reports a base URL written by a NeoSwitch from before TLS.

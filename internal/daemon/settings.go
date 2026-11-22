@@ -17,7 +17,7 @@ const (
 	envHeaders = "ANTHROPIC_CUSTOM_HEADERS"
 	// envExtraCAs makes the session trust NeoSwitch's local CA, so it can reach the daemon over TLS.
 	envExtraCAs = "NODE_EXTRA_CA_CERTS"
-	// EnvUseGateway is Claude Code's gateway mode switch, set by gateway launchers such as `everyapi use claude`. In gateway mode a session takes ANTHROPIC_BASE_URL from its process environment over project settings, so the project's proxy entries do not reach it: it keeps its gateway, which is what it should, because /neoswitch:on refuses gateway sessions and NeoSwitch could only pass their requests on to an upstream that does not know the gateway's credential. NeoSwitch versions up to 0.4.1 wrote gatewayOff into the project to force such sessions through the proxy, which sent their gateway credential to Anthropic; Enable and Disable remove that entry.
+	// EnvUseGateway is Claude Code's gateway mode switch, set by gateway launchers such as `everyapi use claude`. In gateway mode a session takes ANTHROPIC_BASE_URL from its process environment over project settings, so the project's proxy entries do not reach it: it keeps its gateway, which is what it should, because /neoswitch:on refuses gateway sessions and NeoSwitch could only pass their requests on to an upstream that does not know the gateway's credential. NeoSwitch versions up to 0.4.1 wrote gatewayOff into the project to force such sessions through the proxy, which sent their gateway credential to Anthropic; Enable, Disable and the SessionStart hook remove that entry.
 	EnvUseGateway = "CLAUDE_CODE_USE_GATEWAY"
 	gatewayOff    = "0"
 	// TokenHeader is the header that carries NeoSwitch's token.
@@ -48,13 +48,29 @@ func (r Route) Headers(s State) string {
 func Enable(project string, s State, r Route) error {
 	return editSettings(project, true, func(env map[string]any) {
 		removeLegacy(env, s)
+		clearGatewayOverride(env, s)
 		env[envBaseURL] = s.BaseURL()
 		env[envHeaders] = r.Headers(s)
 		env[envExtraCAs] = r.Bundle
-		if env[EnvUseGateway] == gatewayOff {
-			delete(env, EnvUseGateway)
-		}
 	})
+}
+
+// ClearGatewayOverride removes the gateway mode override that versions up to 0.4.1 wrote with their proxy entries, and reports whether the project had one. A running session keeps env it already applied, so this fixes the sessions that start afterwards.
+func ClearGatewayOverride(project string, s State) (bool, error) {
+	cleared := false
+	err := editSettings(project, false, func(env map[string]any) {
+		cleared = clearGatewayOverride(env, s)
+	})
+	return cleared, err
+}
+
+// clearGatewayOverride removes gatewayOff when it sits next to this state's proxy address, where only NeoSwitch put it; a "0" the user set in a project NeoSwitch does not route is theirs and stays.
+func clearGatewayOverride(env map[string]any, s State) bool {
+	if env[EnvUseGateway] != gatewayOff || env[envBaseURL] != s.BaseURL() {
+		return false
+	}
+	delete(env, EnvUseGateway)
+	return true
 }
 
 // Disable removes the env entries Enable wrote, and those of NeoSwitch versions from before TLS. Entries the user changed to point elsewhere are left alone.

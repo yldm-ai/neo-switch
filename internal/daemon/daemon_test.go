@@ -90,26 +90,63 @@ func TestDisableLeavesForeignBaseURL(t *testing.T) {
 	}
 }
 
-// Versions up to 0.4.1 turned Claude Code gateway mode off for the project, which sent the gateway sessions there, such as those of `everyapi use claude`, to Anthropic with the gateway's credential. Switching the project again removes that entry, and leaves a value the user set.
-func TestEnableRemovesGatewayOverrideOfEarlierVersions(t *testing.T) {
+// Versions up to 0.4.1 turned Claude Code gateway mode off for the project, which sent the gateway sessions there, such as those of `everyapi use claude`, to Anthropic with the gateway's credential. Switching the project again, or the SessionStart hook through ClearGatewayOverride, removes that entry. A value the user set is kept: any value other than "0", and a "0" in a project NeoSwitch did not route.
+func TestGatewayOverrideOfEarlierVersionsIsRemoved(t *testing.T) {
 	s, err := EnsureState(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ before, after any }{{"0", nil}, {"1", "1"}} {
-		project := t.TempDir()
-		path := settingsPath(project)
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		_ = os.WriteFile(path, []byte(`{"env":{"CLAUDE_CODE_USE_GATEWAY":"`+tc.before.(string)+`"}}`), 0o644)
-		if err := Enable(project, s, Route{Bundle: BundlePath(s.dir)}); err != nil {
-			t.Fatal(err)
+	for _, tc := range []struct {
+		name, gateway, base string
+		cleared             bool
+	}{
+		{"neoswitch's override", "0", s.BaseURL(), true},
+		{"user's gateway mode", "1", s.BaseURL(), false},
+		{"user's own 0", "0", "", false},
+		{"user's own 0 with a gateway", "0", "https://gateway.example", false},
+	} {
+		for _, via := range []string{"enable", "clear"} {
+			t.Run(tc.name+" via "+via, func(t *testing.T) {
+				project := t.TempDir()
+				path := settingsPath(project)
+				env := map[string]string{EnvUseGateway: tc.gateway}
+				if tc.base != "" {
+					env[envBaseURL] = tc.base
+				}
+				data, _ := json.Marshal(map[string]any{"env": env})
+				_ = os.MkdirAll(filepath.Dir(path), 0o755)
+				_ = os.WriteFile(path, data, 0o644)
+				if via == "enable" {
+					if err := Enable(project, s, Route{Bundle: BundlePath(s.dir)}); err != nil {
+						t.Fatal(err)
+					}
+				} else if cleared, err := ClearGatewayOverride(project, s); err != nil || cleared != tc.cleared {
+					t.Fatalf("ClearGatewayOverride = %v, %v, want %v", cleared, err, tc.cleared)
+				}
+				var settings map[string]map[string]any
+				data, _ = os.ReadFile(path)
+				_ = json.Unmarshal(data, &settings)
+				_, present := settings["env"][EnvUseGateway]
+				if present == tc.cleared {
+					t.Fatalf("settings after %s = %s, want the gateway entry removed: %v", via, data, tc.cleared)
+				}
+			})
 		}
-		var settings map[string]map[string]any
-		data, _ := os.ReadFile(path)
-		_ = json.Unmarshal(data, &settings)
-		if settings["env"][EnvUseGateway] != tc.after {
-			t.Fatalf("gateway mode %q after enable = %v, want %v", tc.before, settings["env"][EnvUseGateway], tc.after)
-		}
+	}
+}
+
+// A project without settings has nothing to clean, and stays without a settings file.
+func TestClearGatewayOverrideCreatesNoSettings(t *testing.T) {
+	s, err := EnsureState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	if cleared, err := ClearGatewayOverride(project, s); err != nil || cleared {
+		t.Fatalf("ClearGatewayOverride = %v, %v", cleared, err)
+	}
+	if _, err := os.Stat(settingsPath(project)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("settings file created: %v", err)
 	}
 }
 
