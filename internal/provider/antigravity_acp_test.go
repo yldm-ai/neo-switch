@@ -89,6 +89,7 @@ const (
 //   - signed-out: sessions cannot be created, failing with the ACP auth_required error as a signed-out agy does
 //   - browser-wait: authenticate never answers, as a browser sign-in nobody finishes
 //   - history: answers "<session> <prompts in the session> <prompt bytes>", or "ok" to a part of a split conversation
+//   - model: answers "<session> <model> <thought level>"; selecting gemini-a-flash leaves only the low thought level
 //   - tool-guarded, tool-unguarded: reports a tool call of agy's own, with or without the tool guard's decision recorded, then answers "done"
 //   - search, search-twice: reports one or two web searches as tool calls, then answers with searchAnswerJSON; search-none answers the same without searching
 //   - quota, rate-limit, too-long: prompts fail with an internal JSON-RPC error whose message or data says why, as agy reports Google's refusals
@@ -117,6 +118,8 @@ func runFakeACP(mode string) {
 		levels     = map[string]string{}
 		// sessionPrompts counts the prompts each session has received.
 		sessionPrompts = map[string]int{}
+		// models is the model each session selected.
+		models = map[string]string{}
 	)
 	update := func(sid, kind, text string) {
 		send(map[string]any{"method": "session/update", "params": map[string]any{
@@ -279,6 +282,16 @@ func runFakeACP(mode string) {
 			if option.ConfigID == "thought_level" {
 				levels[option.SessionID] = option.Value
 			}
+			if option.ConfigID == "model" && mode == "model" {
+				// Like agy, the options after selecting a model are that model's: the flash model offers no high thought level.
+				models[option.SessionID] = option.Value
+				choices := []any{map[string]string{"value": "low", "name": "Low"}, map[string]string{"value": "high", "name": "High"}}
+				if option.Value == "gemini-a-flash" {
+					choices = choices[:1]
+				}
+				reply(map[string]any{"configOptions": []any{map[string]any{"type": "select", "id": "thought_level", "name": "Thinking", "currentValue": "low", "options": choices}}})
+				continue
+			}
 			reply(map[string]any{})
 		case "session/close":
 			reply(map[string]any{})
@@ -335,6 +348,13 @@ func runFakeACP(mode string) {
 				// agy ran one of its own tools, with or without asking the tool guard first.
 				toolCall(p.sid, "call1", "read", map[string]string{"Path": "/etc/hosts"}, mode == "tool-guarded")
 				p.answer = `{"text":"done"}`
+			case "model":
+				// The session, its model, and the thought level selected for it.
+				level := levels[p.sid]
+				if level == "" {
+					level = "unset"
+				}
+				p.answer = fmt.Sprintf(`{"text":"%s %s %s"}`, p.sid, models[p.sid], level)
 			case "history":
 				// The session, how many prompts it has received, and the length of this one; earlier parts of a split conversation say "ok".
 				p.answer = fmt.Sprintf(`{"text":"%s %d %d"}`, p.sid, sessionPrompts[p.sid], len(text))

@@ -32,10 +32,15 @@ type AntigravityACP struct {
 	path  string
 	agent string
 	model string
-	cwd   string
+	// background answers Claude Code's background requests that read the conversation without building on it, such as prompt suggestions and session titles, "" for the main model (see backgroundModelFor).
+	background string
+	cwd        string
 
 	mu   sync.Mutex
 	conn *acpConn
+
+	// backgroundMissing is set once the plan turned out not to offer the background model, which is logged once.
+	backgroundMissing atomic.Bool
 
 	// unguarded is set for good once agy ran a tool without the tool guard (acp_guard.go): every later request is refused.
 	unguarded atomic.Bool
@@ -105,7 +110,7 @@ func NewAntigravityACPFromEnv(ctx context.Context) (*AntigravityACP, error) {
 	if model == "" {
 		model = DefaultModel
 	}
-	return &AntigravityACP{path: path, agent: agent, model: model, cwd: cwd}, nil
+	return &AntigravityACP{path: path, agent: agent, model: model, background: backgroundModel(model), cwd: cwd}, nil
 }
 
 func (a *AntigravityACP) Model() string { return a.model }
@@ -318,13 +323,13 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 	if err != nil {
 		return nil, err
 	}
-	x := &acpExchange{c: c, contents: req.Contents}
+	x := &acpExchange{c: c, contents: req.Contents, model: a.modelFor(req)}
 	x.role, x.owner = originRole(req.Origin)
 	keys := historyKeys(req.Contents)
 	pieces, continued := a.continuation(x, req, keys)
 	fresh := x.session == nil
 	if fresh {
-		if x.session, err = a.newSession(ctx, c); err != nil {
+		if x.session, err = a.newSession(ctx, c, x.model); err != nil {
 			c.release()
 			return nil, err
 		}
@@ -352,8 +357,8 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 			return nil, err
 		}
 	}
-	// Learn only from a new session read in one prompt without images: image tokens are not part of the text estimate, and a continued session holds more than this request's text.
-	if fresh && len(prompts) == 1 && len(prompts[0].images) == 0 && x.result.Usage != nil {
+	// Learn only from a new session of the main model read in one prompt without images: image tokens are not part of the text estimate, a continued session holds more than this request's text, and the background model's overhead says nothing about the main thread's.
+	if fresh && x.session.model == a.model && len(prompts) == 1 && len(prompts[0].images) == 0 && x.result.Usage != nil {
 		if overhead := promptTokens(x.result.Usage) - int64(promptTextTokens(req)); overhead > 0 {
 			a.promptOverhead.Store(overhead)
 		}
@@ -373,7 +378,7 @@ func (a *AntigravityACP) continuation(x *acpExchange, req translate.Request, key
 	if n < 2 || req.Contents[n-1] == nil || req.Contents[n-1].Role != genai.RoleUser {
 		return nil, ""
 	}
-	s, from := x.c.claim(keys, x.role, x.owner)
+	s, from := x.c.claim(keys, x.role, x.owner, x.model)
 	if s == nil {
 		return nil, ""
 	}
@@ -407,8 +412,8 @@ func (a *AntigravityACP) freshPieces(s *acpSession, req translate.Request, accep
 	return conversationPieces(req, acceptImages)
 }
 
-// newSession opens a session answering with the configured model.
-func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn) (*acpSession, error) {
+// newSession opens a session answering with model. A background model the account's plan does not offer gives way to the main model: background requests are no reason to fail.
+func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn, model string) (*acpSession, error) {
 	session, err := c.conn.NewSession(ctx, acp.NewSessionRequest{Cwd: a.cwd, McpServers: []acp.McpServer{}})
 	if err != nil {
 		return nil, a.requestError(ctx, c, "create Antigravity ACP session", err)
@@ -417,16 +422,29 @@ func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn) (*acpSessio
 		return nil, errors.New("Antigravity ACP returned no session ID")
 	}
 	s := &acpSession{id: session.SessionId, options: session.ConfigOptions}
-	// agy offers each account the models of its plan. A model outside them fails every request alike, so it is reported as unavailable, which Claude Code shows as it is, rather than as an error worth retrying.
-	if offered := modelIDs(session.ConfigOptions); len(offered) > 0 && !slices.Contains(offered, a.model) {
-		c.closeSessions([]*acpSession{s})
-		return nil, &translate.UnavailableError{Message: ModelNotOfferedMessage(a.model, offered) + " Run /neoswitch:off to continue this session on Claude."}
+	offered := modelIDs(session.ConfigOptions)
+	if model != a.model && len(offered) > 0 && !slices.Contains(offered, model) {
+		if !a.backgroundMissing.Swap(true) {
+			acpLogger.Warn("the account's Antigravity plan does not offer the background model; background requests use the main model", "background_model", model, "model", a.model)
+		}
+		model = a.model
 	}
-	if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
-		SessionId: s.id, ConfigId: acpModel, Value: acp.SessionConfigValueId(a.model),
-	}}); err != nil {
+	// agy offers each account the models of its plan. A model outside them fails every request alike, so it is reported as unavailable, which Claude Code shows as it is, rather than as an error worth retrying.
+	if len(offered) > 0 && !slices.Contains(offered, model) {
 		c.closeSessions([]*acpSession{s})
-		return nil, a.requestError(ctx, c, "select Antigravity model "+a.model, err)
+		return nil, &translate.UnavailableError{Message: ModelNotOfferedMessage(model, offered) + " Run /neoswitch:off to continue this session on Claude."}
+	}
+	selected, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
+		SessionId: s.id, ConfigId: acpModel, Value: acp.SessionConfigValueId(model),
+	}})
+	if err != nil {
+		c.closeSessions([]*acpSession{s})
+		return nil, a.requestErrorFor(ctx, c, model, "select Antigravity model "+model, err)
+	}
+	s.model = model
+	// The options depend on the model: gemini-3.8-flash offers no xhigh thought level, for one.
+	if len(selected.ConfigOptions) > 0 {
+		s.options = selected.ConfigOptions
 	}
 	return s, nil
 }
@@ -447,7 +465,7 @@ func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, 
 		if _, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
 			SessionId: s.id, ConfigId: acpThoughtLevel, Value: level,
 		}}); err != nil {
-			return acp.PromptResponse{}, a.requestError(ctx, c, "select Antigravity thought level "+string(level), err)
+			return acp.PromptResponse{}, a.requestErrorFor(ctx, c, s.model, "select Antigravity thought level "+string(level), err)
 		}
 		s.level = level
 	}
@@ -471,7 +489,7 @@ func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, 
 			_ = c.conn.Cancel(cancelCtx, acp.CancelNotification{SessionId: s.id})
 			cancel()
 		}
-		return acp.PromptResponse{}, a.requestError(ctx, c, "Antigravity ACP prompt", err)
+		return acp.PromptResponse{}, a.requestErrorFor(ctx, c, s.model, "Antigravity ACP prompt", err)
 	}
 	if result.StopReason == acp.StopReasonCancelled {
 		return acp.PromptResponse{}, errors.New("Antigravity ACP cancelled the prompt")
@@ -483,6 +501,11 @@ func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, 
 //
 // Other failures reach Claude Code as plain sentences: the JSON-RPC error agy sent goes to the daemon log only. An agy that exited or asks for authentication cannot answer any request, so it is reported as unavailable, which Claude Code does not retry.
 func (a *AntigravityACP) requestError(ctx context.Context, c *acpConn, action string, err error) error {
+	return a.requestErrorFor(ctx, c, a.model, action, err)
+}
+
+// requestErrorFor is requestError for a request answered by model, which a used-up quota names.
+func (a *AntigravityACP) requestErrorFor(ctx context.Context, c *acpConn, model, action string, err error) error {
 	select {
 	case <-c.conn.Done():
 		a.discard(c)
@@ -503,7 +526,7 @@ func (a *AntigravityACP) requestError(ctx context.Context, c *acpConn, action st
 	}
 	acpLogger.Warn("Antigravity request failed", "action", action, "error", err)
 	if errors.As(err, &rpcErr) {
-		if classified := a.agyRefusal(rpcErr); classified != nil {
+		if classified := agyRefusal(rpcErr, model); classified != nil {
 			return classified
 		}
 	}
@@ -518,7 +541,7 @@ var (
 )
 
 // agyRefusal turns an agy error that says why Google refused the request into the error Claude Code should show, or returns nil. The reason is quoted in agy's own words, which can name when a quota resets; it is taken from the error message, or from a string in its data, never the JSON itself.
-func (a *AntigravityACP) agyRefusal(rpcErr *acp.RequestError) error {
+func agyRefusal(rpcErr *acp.RequestError, model string) error {
 	reasons := append([]string{rpcErr.Message}, jsonStrings(rpcErr.Data)...)
 	find := func(pattern *regexp.Regexp) string {
 		for _, reason := range reasons {
@@ -529,7 +552,7 @@ func (a *AntigravityACP) agyRefusal(rpcErr *acp.RequestError) error {
 		return ""
 	}
 	if reason := find(agyQuotaPattern); reason != "" {
-		return &translate.UnavailableError{Message: fmt.Sprintf("Your Google account has used up its Antigravity quota for %s. Antigravity said: %q. Wait until the quota resets, or run /neoswitch:off to continue this session on Claude.", a.model, reason)}
+		return &translate.UnavailableError{Message: fmt.Sprintf("Your Google account has used up its Antigravity quota for %s. Antigravity said: %q. Wait until the quota resets, or run /neoswitch:off to continue this session on Claude.", model, reason)}
 	}
 	if reason := find(agyTooLongPattern); reason != "" {
 		return &translate.UnavailableError{Message: fmt.Sprintf("prompt is too long: Antigravity said: %q. Run /compact to shorten the conversation.", reason)}

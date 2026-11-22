@@ -145,6 +145,7 @@ Run `neoswitch off` in each project you enabled before removing NeoSwitch. To re
 | `GEMINI_API_KEY` | Gemini Developer API key |
 | `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` | Use Vertex AI with Application Default Credentials instead |
 | `GEMINI_MODEL` | Backend model (default: `gemini-4-neon`) |
+| `NEOSWITCH_BACKGROUND_MODEL` | Antigravity route only. The model for Claude Code's prompt suggestions and session titles, which read the conversation without building on it (default: `gemini-3.8-flash`). `main` keeps them on `GEMINI_MODEL`. Without this variable, a `GEMINI_MODEL` other than the default keeps them on that model too. A model the account's plan does not offer falls back to `GEMINI_MODEL` ([antigravity.md](antigravity.md#background-requests)) |
 | `GEMINI_BASE_URL` | Gemini API base URL |
 | `OPENAI_API_KEY` | OpenAI API key (experimental `openai` backend) |
 | `OPENAI_MODEL` | OpenAI model, required for the `openai` backend |
