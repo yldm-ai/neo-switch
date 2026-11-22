@@ -26,10 +26,16 @@ neoswitch_register() {
 
 # neoswitch_routed reports whether this session's requests may go through NeoSwitch: its env names a local NeoSwitch address, the project's settings do, or the session opted in. A window that applied the settings after it started may not show them in a hook's env, so the settings file counts too.
 neoswitch_routed() {
-	case "${ANTHROPIC_BASE_URL:-}" in
-	http://127.0.0.1:* | https://127.0.0.1:*) return 0 ;;
-	esac
 	state=$(neoswitch_state_dir)
+	case "${ANTHROPIC_BASE_URL:-}" in
+	https://127.0.0.1:*) return 0 ;;
+	http://127.0.0.1:*)
+		# A NeoSwitch from before TLS wrote this form with its token. Other local proxies use it too, and so do `neoswitch claude` and `neoswitch serve`, whose sessions this hook must leave alone.
+		if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && grep -qF "\"token\": \"$ANTHROPIC_AUTH_TOKEN\"" "$state/proxy.json" 2>/dev/null; then
+			return 0
+		fi
+		;;
+	esac
 	[ -d "$state" ] || return 1
 	if grep -q 'https://127.0.0.1:' "${CLAUDE_PROJECT_DIR:-.}/.claude/settings.local.json" 2>/dev/null; then
 		return 0
