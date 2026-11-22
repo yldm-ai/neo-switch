@@ -36,7 +36,16 @@ const CHOICES: Record<Dialog, { question: string; keep: string; cancel?: string 
   },
 }
 
+// Claude Code's header keeps naming the Claude model a session asks for, so while this session's model requests go to Gemini a line under the prompt says which model answers. The daemon decides where a session's requests go and `neoswitch label` asks it, so the line is checked again after every NeoSwitch command and, while it shows or a sign-in may still finish in the browser, before each prompt: the session can also be switched from a terminal, the browser or another window's /neoswitch:on.
+let labelled = false
+let signingIn = false
+
 export const register: Register = on => {
+  on('prompt.submit', async ($, e, next) => {
+    if (labelled || signingIn) void refreshLabel($)
+    return next(e)
+  })
+
   on('command.run', { command: 'neoswitch:login' }, async ($, e, next) => {
     if (!(await supported($))) return next(e)
     let started = false
@@ -48,14 +57,18 @@ export const register: Register = on => {
       if (arg !== '' && arg !== 'cancel') {
         // The code goes on stdin, not the command line, where other programs on the computer could read it.
         $.ui.log('Checking the code…')
-        return answer(await run($, env, ['antigravity', 'login', '--on', project, '-'], arg))
+        const checked = answer(await run($, env, ['antigravity', 'login', '--on', project, '-'], arg))
+        void refreshLabel($)
+        return checked
       }
       const ran = await run($, env, ['antigravity', 'login', '--on', project, ...(arg === '' ? [] : [arg])])
       const { text, dialog } = splitDialog(ran.stdout)
       if (dialog !== undefined) {
         // Asked after the answer, so the link above is shown before the dialog covers the prompt.
-        void askForCode($, env, project, dialog, linkIn(text))
+        signingIn = true
+        void askForCode($, env, project, dialog, linkIn(text)).then(() => refreshLabel($))
       }
+      void refreshLabel($)
       return answer({ ...ran, stdout: text })
     } catch (err) {
       if (!started) return next(e)
@@ -70,7 +83,9 @@ export const register: Register = on => {
       try {
         const env = await commandEnv($)
         started = true
-        return answer(await run($, env, [command, env.CLAUDE_PROJECT_DIR ?? '']), `/neoswitch:${command}`)
+        const shown = answer(await run($, env, [command, env.CLAUDE_PROJECT_DIR ?? '']), `/neoswitch:${command}`)
+        void refreshLabel($)
+        return shown
       } catch (err) {
         if (!started) return next(e)
         // After the command ran, the skill would run it a second time.
@@ -190,4 +205,19 @@ function logAnswer($: EngineInterface, ran: Ran): void {
 
 function message(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).replace(/\.$/, '')
+}
+
+// refreshLabel pins the line `neoswitch label` prints, or removes it when it prints none. It runs the binary already built (--cached), so it never builds or downloads, and any problem leaves the line as it was.
+async function refreshLabel($: EngineInterface): Promise<void> {
+  try {
+    const env = await commandEnv($)
+    const ran = await $.process.run([`${env.CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh`, '--cached', 'label'], { cwd: env.CLAUDE_PROJECT_DIR, env, timeoutMs: 10_000 })
+    const line = ran.stdout.trim()
+    // A binary from before the command prints its usage and fails.
+    if (ran.exitCode !== 0 || (line !== '' && (!line.startsWith('NeoSwitch: ') || line.includes('\n')))) return
+    $.ui.status(line === '' ? undefined : line)
+    labelled = line !== ''
+  } catch {
+    // The line stays as it was.
+  }
 }

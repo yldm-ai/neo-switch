@@ -58,6 +58,8 @@ So `agy` runs under a tool guard:
 
 `search_web` runs without asking: it touches nothing on this computer, but its query reaches Google. NeoSwitch uses it for WebSearch (below). Claude Code's own tools run only in Claude Code, under its permission rules.
 
+**Which model answers.** Claude Code's header and its system prompt keep naming the Claude model the session asks for; sending a Gemini model ID instead would lose the effort level NeoSwitch maps to Gemini's thinking, and a running session does not change its model. So, on Claude Code versions that load the mod, a line under the prompt says "NeoSwitch: Gemini 4 Neon answers this session" while the daemon sends this session's model requests to Gemini. `neoswitch label` asks the daemon, after every NeoSwitch command and, while the line shows or a sign-in may still finish in the browser, before each prompt, so the line also follows a switch made from a terminal or another window. Every request also opens with one fixed sentence (`provider.ModelIdentity`) telling the model that a model the instructions name is only the session's label; it names no model, so it stays true for the background model, and it never changes, so it does not disturb caching or session reuse.
+
 ## Background requests
 
 At the end of every turn Claude Code asks for a prompt suggestion, and it names sessions with short side requests. These requests read the conversation without building on it, so they go to `gemini-3.8-flash` instead of spending the main model's quota. `agy` reports quotas per model.

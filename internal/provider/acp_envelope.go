@@ -26,7 +26,7 @@ import (
 const acpPromptBudget = 150_000
 
 // acpAnswerInstructions open the prompt the model answers. agy keeps the start of a prompt, so they come first.
-const acpAnswerInstructions = "Act as the language model for Claude Code. Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Do not use ACP tools, edit files, or run commands yourself.\n\n"
+const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Do not use ACP tools, edit files, or run commands yourself.\n\n"
 
 // acpPiece is prompt text with the images that belong to it.
 type acpPiece struct {
