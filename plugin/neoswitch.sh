@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs the NeoSwitch CLI bundled with this plugin. When Go is available, the binary is built from the plugin's own Go source on first use (and rebuilt when the source is newer) into the user's cache directory, which always matches the installed plugin exactly.
-# Without Go, the script downloads the release binary named by the repository's VERSION file for this OS and architecture, verifies it against the release's checksums.txt and caches it per version; when the download fails, it runs the previously downloaded version if one is cached. Between releases the plugin source on main can be newer than that binary, so a downloaded binary may lack changes that a Go build would include.
+# Without Go, the script downloads the release binary named by the repository's VERSION file for this OS and architecture, verifies it against the release's checksums.txt and caches it per version; when the download fails, it runs the previously downloaded version if one is cached. The marketplace pins the plugin to a release tag, so the plugin source is always the tree that release binary was built from.
 set -eu
 # Tells the binary it runs from the plugin, which is what its update notice tells the user to update.
 export NEOSWITCH_PLUGIN=1

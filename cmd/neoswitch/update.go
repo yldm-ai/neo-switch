@@ -17,7 +17,7 @@ import (
 
 // Claude Code turns auto-update off for third-party marketplaces such as NeoSwitch's, and marketplace.json cannot turn it on, so most users never receive a fix unless something tells them. The session note does: attach shows a notice when the cached latest version is newer than this binary, and starts a background check when the cache is stale. The check runs in a detached process because Claude Code waits for the SessionStart hook, so a slow network must never delay a session; the notice therefore appears from the session after the check.
 //
-// The latest version is main's VERSION file rather than GitHub's latest release: a plugin update delivers main, so main's VERSION is exactly what updating gets the user. Releases keep it truthful, because main's VERSION is only changed by a release pull request whose tree was already released (see CONTRIBUTING.md).
+// The latest version is main's VERSION file rather than GitHub's latest release: a plugin update delivers the release tag that main's .claude-plugin/marketplace.json pins, and the released-version check keeps main's VERSION equal to that pin and the pin on a published release (see CONTRIBUTING.md), so main's VERSION is exactly what updating gets the user.
 
 const (
 	updateCheckURL      = "https://raw.githubusercontent.com/yldm-ai/neo-switch/main/VERSION"

@@ -39,9 +39,11 @@ go vet ./...
 
 Maintainers release by pushing a tag that starts with `v`, such as `v0.2.0`. The [release workflow](.github/workflows/release.yml) runs `go test -race ./...` and `go vet ./...`, builds the `neoswitch` binaries for macOS, Linux and Windows with the tag as the version, and publishes a GitHub Release with the binaries and a `checksums.txt` file of SHA-256 sums.
 
-Most users get NeoSwitch through the plugin marketplace, which delivers `main`. Plugin users without Go download the release named by `main`'s `VERSION`, and the session note tells every plugin user to update when `main`'s `VERSION` is newer than the version they run. So `main`'s `VERSION` must always name a published release, built from the tree that `main` gets:
+Most users get NeoSwitch through the plugin marketplace. [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) pins the plugin to a release tag (`"ref": "v0.4.0"`), so users get exactly the tree that release was built from: the plugin's skills, hooks and mod always match the binary that plugin users without Go download, and changes merged to `main` reach users only with the next release. The session note tells plugin users to update when `main`'s `VERSION` is newer than the version they run, so `VERSION` and the pin move together, and only to a published release:
 
-1. Merge the fixes to `main` first. A change that users should get, above all a fix for a protocol change upstream, needs a release: without one it reaches only users who have Go, and no user is told to update.
-2. On a new branch from the latest `main`, change only `VERSION`, commit, and push the branch.
-3. Push the matching tag on that commit, `v` followed by the contents of `VERSION`, and wait for the release workflow to publish the release.
-4. Open the pull request and merge it. The `released-version` check fails while the tag is missing, while its release is not published, or when the tree being merged differs from the tagged one; re-run it after the release is published.
+1. Merge the changes to `main`. A change that users should get, above all a fix for a protocol change upstream, needs a release: until then no user gets it.
+2. On a new branch from the latest `main`, change `VERSION` and the pin in `.claude-plugin/marketplace.json` to the new version (the pin is `v` followed by `VERSION`), commit, and push the branch.
+3. Push the matching tag on that commit and wait for the release workflow to publish the release.
+4. Open the pull request and merge it. Other pull requests may merge before it in any order: users get the tagged tree, not the merged one. The `released-version` check fails when the pin and `VERSION` differ, while the tag is missing or its release is not published, or when the tag's own `VERSION` differs; re-run it after the release is published.
+
+To take a release back, open a pull request that moves `VERSION` and the pin to an earlier published release, or release a fix as a new version. A release that failed to publish is fixed or its branch dropped the same day: nothing reaches users before its pull request merges.
