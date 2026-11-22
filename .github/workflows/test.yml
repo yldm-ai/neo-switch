@@ -38,7 +38,7 @@ jobs:
         env:
           NEOSWITCH_E2E_REQUIRE_CLAUDE: "1"
 
-  # Plugin users without Go download the release named by main's VERSION, and the update notice reads main's VERSION as what updating delivers, so a pull request that changes VERSION must merge exactly the tree that tag already released: tag first, wait for the release workflow, then open the pull request (see CONTRIBUTING.md). A pull request opened before the release is published passes once its checks are re-run.
+  # Users get the plugin from the tag that .claude-plugin/marketplace.json pins, so its source always matches the release binary users without Go download; VERSION and the pin move together, and only to a published release (see CONTRIBUTING.md). A pull request opened before the release is published passes once its checks are re-run.
   released-version:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
@@ -47,27 +47,5 @@ jobs:
         with:
           # The pull request merge commit and its first parent, the base branch.
           fetch-depth: 2
-      - name: A VERSION change merges the tree its release was built from
-        env:
-          REPO: ${{ github.repository }}
-        run: |
-          set -eu
-          version="v$(tr -d ' \t\r\n' < VERSION)"
-          base="v$(git show HEAD^1:VERSION | tr -d ' \t\r\n')"
-          if [ "$version" = "$base" ]; then
-            echo "VERSION is unchanged ($version)."
-            exit 0
-          fi
-          if ! git fetch --depth=1 origin "refs/tags/$version:refs/tags/$version"; then
-            echo "::error::VERSION changes to $version, but tag $version does not exist. Push the tag on this branch's head and wait for the release workflow before merging."
-            exit 1
-          fi
-          if [ "$(git rev-parse "$version^{tree}")" != "$(git rev-parse HEAD^{tree})" ]; then
-            echo "::error::Merging this pull request would put a tree on main that differs from the one tag $version released. Bring the branch up to date with main, move the release to a new patch version, and tag again."
-            exit 1
-          fi
-          if ! curl -fsSIL -o /dev/null "https://github.com/$REPO/releases/download/$version/checksums.txt"; then
-            echo "::error::Tag $version exists, but its release is not published yet. Wait for the release workflow, then re-run this check."
-            exit 1
-          fi
-          echo "Release $version is published from exactly this tree."
+      - name: The plugin is pinned to the published release VERSION names
+        run: sh .github/scripts/released-version.sh "${{ github.repository }}"

@@ -39,7 +39,7 @@ With the OAuth route, the daemon starts the official `agy acp` subprocess. NeoSw
 
 The plugin runs the binary through `plugin/neoswitch.sh`. With Go installed, it builds the binary from the plugin's own source on first use. Without Go, it downloads the release binary named by the repository's `VERSION` file for macOS or Linux (amd64 or arm64) and verifies its SHA-256 checksum before running it; when the download fails, for example offline right after an update, it runs the version it downloaded earlier. Between releases that binary can be older than the plugin source.
 
-Claude Code does not auto-update third-party marketplaces unless the user turns it on, so the plugin checks for updates itself. At most every 6 hours, the SessionStart hook reads `main`'s `VERSION` from GitHub in a background process, without delaying the session. When it is newer than the running version, the session note and `/neoswitch:status` say so and give the update commands. `NEOSWITCH_NO_UPDATE_CHECK=1` or Claude Code's `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` turns the check off. The standalone CLI does not check.
+Claude Code does not auto-update third-party marketplaces unless the user turns it on, so the plugin checks for updates itself. At most every 6 hours, the SessionStart hook reads `main`'s `VERSION` from GitHub in a background process (it always names the release the marketplace pins), without delaying the session. When it is newer than the running version, the session note and `/neoswitch:status` say so and give the update commands. `NEOSWITCH_NO_UPDATE_CHECK=1` or Claude Code's `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` turns the check off. The standalone CLI does not check.
 
 In a new session that does not use NeoSwitch, the SessionStart hook offers `/neoswitch:on`, at most once a day per project, using the shell alone. It does so only when the last check of the route by `/neoswitch:on` or `/neoswitch:login` passed (the `ready` file in the state folder), never in a project where `/neoswitch:off` ran (the `declined` file), never on resume, `/clear` or compaction, and never with `NEOSWITCH_NO_HINT` set.
 
@@ -172,6 +172,6 @@ go test -race ./...
 go vet ./...
 ```
 
-To release, follow [Releases in CONTRIBUTING.md](../CONTRIBUTING.md#releases): bump `VERSION` on its own branch, push the matching tag (`v` followed by its contents, such as `v0.1.0`), and merge to `main` only after the release is published. The release workflow refuses a tag that does not match `VERSION`.
+To release, follow [Releases in CONTRIBUTING.md](../CONTRIBUTING.md#releases): on its own branch, bump `VERSION` and the plugin's pinned tag in `.claude-plugin/marketplace.json`, push the matching tag (`v` followed by `VERSION`, such as `v0.1.0`), and merge to `main` only after the release is published. Users get the plugin from the pinned tag, never from `main`. The release workflow refuses a tag that does not match `VERSION`.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the contribution workflow.
