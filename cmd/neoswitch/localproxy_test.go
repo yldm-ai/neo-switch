@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -58,7 +59,6 @@ func TestAttachLeavesOtherLocalProxiesAlone(t *testing.T) {
 	}
 }
 
-// The plugin's hooks start NeoSwitch only for sessions it may route; another local proxy's sessions must not start it on every session start and prompt.
 // A session started by a gateway launcher such as `everyapi use claude` keeps the gateway's ANTHROPIC_BASE_URL in gateway mode, while its hooks see the project's NeoSwitch address. Its requests never reach NeoSwitch, so the hook must neither attach it nor tell it that it reaches Claude through NeoSwitch.
 func TestAttachLeavesGatewaySessionsAlone(t *testing.T) {
 	isolateBackendEnv(t, false)
@@ -82,6 +82,43 @@ func TestAttachLeavesGatewaySessionsAlone(t *testing.T) {
 	}
 }
 
+// A project switched on by a version up to 0.4.1 still holds CLAUDE_CODE_USE_GATEWAY=0, which the hook's environment shows as applied. The hook removes it, so gateway sessions that start afterwards reach their gateway, and tells this session, which keeps the override until it closes, to start again if it came through a gateway.
+func TestAttachRemovesGatewayOverrideOfEarlierVersions(t *testing.T) {
+	isolateBackendEnv(t, false)
+	stateDir := os.Getenv("NEOSWITCH_STATE_DIR")
+	state, err := daemon.EnsureState(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	t.Setenv("CLAUDE_PROJECT_DIR", project)
+	if err := daemon.Enable(projectKey(project), state, daemon.Route{Bundle: daemon.BundlePath(stateDir)}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projectKey(project), ".claude", "settings.local.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(path, bytes.Replace(data, []byte(`"env": {`), []byte(`"env": {"CLAUDE_CODE_USE_GATEWAY": "0", `), 1), 0o600)
+	t.Setenv("ANTHROPIC_BASE_URL", state.BaseURL())
+	t.Setenv("CLAUDE_CODE_USE_GATEWAY", "0")
+	out := stdoutOf(t, func() error {
+		return attach([]string{"--pid", strconv.Itoa(os.Getpid()), "--session", "override-test"})
+	})
+	t.Cleanup(func() { daemon.Detach(state, os.Getpid()) })
+	if !strings.Contains(out, "turned off gateway mode") {
+		t.Fatalf("the session was not told about the removed override: %q", out)
+	}
+	if data, _ := os.ReadFile(path); bytes.Contains(data, []byte("CLAUDE_CODE_USE_GATEWAY")) {
+		t.Fatalf("override still in the project settings: %s", data)
+	}
+	if on, _ := daemon.Enabled(projectKey(project), state); !on {
+		t.Fatal("removing the override turned the project off")
+	}
+}
+
+// The plugin's hooks start NeoSwitch only for sessions it may route; another local proxy's sessions must not start it on every session start and prompt.
 func TestHooksLeaveOtherLocalProxiesAlone(t *testing.T) {
 	// The hook reads the token from the state file as NeoSwitch writes it.
 	stateDir := t.TempDir()
