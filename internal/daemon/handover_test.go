@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -188,7 +189,14 @@ func TestDaemonTakesThePortBackWhenTheSuccessorNeverListens(t *testing.T) {
 	if _, err := requestHandover(s, "v0.4.6", false); err != nil {
 		t.Fatal(err)
 	}
+	// Until the predecessor takes the port back, a session that finds it free must wait rather than start a daemon of its own.
+	if !takeoverInProgress(s.dir) {
+		t.Fatal("a frozen predecessor is not reported as a handover in progress")
+	}
 	waitVersion(t, s, "v0.4.5")
+	if takeoverInProgress(s.dir) {
+		t.Fatal("the handover is still reported after the port was taken back")
+	}
 	if !TakeoverFailedRecently(s.dir, "v0.4.6") {
 		t.Fatal("the failed takeover was not recorded")
 	}
@@ -236,5 +244,55 @@ func TestOnlyOneTakeoverAtATime(t *testing.T) {
 	release()
 	if takeoverInProgress(dir) {
 		t.Fatal("released lock still reported")
+	}
+}
+
+// The successor's sessions are the predecessor's, not the disk's: an opt-out the predecessor saved while a successor waited, or a stale file, must not put a session back on Gemini.
+func TestSuccessorTakesTheHandedOverSessionsNotTheDisk(t *testing.T) {
+	s := testState(t)
+	alive := func(int) bool { return true }
+	_, oldDone := runDaemon(t, s, http.NotFoundHandler(), Options{StartupGrace: time.Minute, Alive: alive, Version: "v0.4.5"})
+	waitVersion(t, s, "v0.4.5")
+	if _, err := AttachSession(s, Session{PID: 200, Project: "/p", ID: "kept", OptIn: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{"opt_ins":{"kept":{"pid":200,"project":"/p"},"turned-off":{"pid":300,"project":"/p"}},"projects":["/p"]}`
+	if err := WriteFileAtomic(optInsPath(s.dir), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runDaemon(t, s, http.NotFoundHandler(), Options{StartupGrace: time.Minute, Alive: alive, Version: "v0.4.6", TakeOver: true})
+	waitVersion(t, s, "v0.4.6")
+	<-oldDone
+	if info, _ := StatusOf(s, "turned-off"); info.OptedIn {
+		t.Fatal("an opt-in only the disk held came back with the takeover")
+	}
+	if info, _ := StatusOf(s, "kept"); !info.OptedIn {
+		t.Fatal("the handed-over opt-in was lost")
+	}
+}
+
+func TestFrozenDaemonDoesNotStopOnItsOwn(t *testing.T) {
+	sessions := newSessionSet(t.TempDir(), nil)
+	sessions.add(attachRequest{PID: 100})
+	sessions.freeze()
+	// Every session gone and the grace over: a daemon that is not handing over would stop here.
+	if sessions.prune(func(int) bool { return false }, true) {
+		t.Fatal("a frozen daemon decided to stop, which would cut the replies it drains")
+	}
+}
+
+func TestTakeoverLockIsRemovedOnlyByItsHolder(t *testing.T) {
+	dir := t.TempDir()
+	release, ok := acquireTakeoverLock(dir)
+	if !ok {
+		t.Fatal("lock refused")
+	}
+	// Another process took the lock over meanwhile.
+	if err := os.WriteFile(takeoverLockPath(dir), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if _, err := os.Stat(takeoverLockPath(dir)); err != nil {
+		t.Fatal("release removed a lock this process no longer held")
 	}
 }

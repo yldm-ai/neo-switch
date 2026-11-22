@@ -85,7 +85,6 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 	}
 	sessions := newSessionSet(s.dir, opts.Release)
 	sessions.idleGrace = opts.IdleGrace
-	sessions.load(opts.Alive)
 	protocol := 0
 	if HandoverSupported() {
 		protocol = HandoverProtocol
@@ -94,9 +93,15 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			return err
 		}
 	}
-	listener, err := listenOrTakeOver(s, sessions, opts)
+	listener, handover, err := listenOrTakeOver(s, opts)
 	if err != nil {
 		return err
+	}
+	// The state on disk is read, and saved, only once this daemon owns the port: a daemon still waiting for it must not overwrite what the serving one saves. After a handover the predecessor's sessions replace it, since they are what it last saved and what happened since.
+	if handover != nil {
+		sessions.adopt(handover, opts.Alive)
+	} else {
+		sessions.load(opts.Alive)
 	}
 	successor := make(chan string, 1)
 	mux := http.NewServeMux()
@@ -203,12 +208,14 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			<-served
 			if answersWithin(s, successorWait) {
 				// Only another daemon can answer now that this one stopped listening. The replies in progress finish here.
+				endHandingOver(s.dir)
 				drain(server, drainLimit)
 				return ErrHandedOver
 			}
 			// The successor never came up: take the port back, and keep every window from trying that version again for a while.
 			again, err := listen(s)
 			if err != nil {
+				endHandingOver(s.dir)
 				if answersWithin(s, time.Second) {
 					drain(server, drainLimit)
 					return ErrHandedOver
@@ -219,6 +226,7 @@ func Run(ctx context.Context, s State, proxy http.Handler, opts Options) error {
 			listener = again
 			recordFailedTakeover(s.dir, version)
 			sessions.unfreeze()
+			endHandingOver(s.dir)
 			go func() { served <- server.Serve(listener) }()
 			ticker.Reset(opts.PollInterval)
 		}
@@ -242,33 +250,34 @@ func listen(s State) (net.Listener, error) {
 	return listener, nil
 }
 
-// listenOrTakeOver opens the port. With opts.TakeOver it first asks the daemon serving it to hand over, then listens as soon as that daemon frees the port and adopts its sessions; when no daemon answers it simply listens.
-func listenOrTakeOver(s State, sessions *sessionSet, opts Options) (net.Listener, error) {
+// listenOrTakeOver opens the port. With opts.TakeOver it first asks the daemon serving it to hand over, then listens as soon as that daemon frees the port and returns its sessions; when no daemon answers it simply listens.
+func listenOrTakeOver(s State, opts Options) (net.Listener, *Handover, error) {
 	if !opts.TakeOver {
-		return listen(s)
+		listener, err := listen(s)
+		return listener, nil, err
 	}
 	release, ok := acquireTakeoverLock(s.dir)
 	if !ok {
-		return nil, ErrTakeoverBusy
+		return nil, nil, ErrTakeoverBusy
 	}
 	defer release()
 	if _, running := Status(s); !running {
-		return listen(s)
+		listener, err := listen(s)
+		return listener, nil, err
 	}
 	h, err := requestHandover(s, opts.Version, opts.TakeOverExplicit)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	deadline := time.Now().Add(bindWait)
 	for {
 		listener, err := listen(s)
 		if err == nil {
-			sessions.adopt(h, opts.Alive)
-			return listener, nil
+			return listener, h, nil
 		}
 		if time.Now().After(deadline) {
 			// The predecessor takes the port back when nobody answers on it.
-			return nil, err
+			return nil, nil, err
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -454,6 +463,10 @@ func (s *sessionSet) remove(pid int) {
 func (s *sessionSet) prune(alive func(int) bool, graceOver bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Handing over: the successor checks the sessions from now on, and this daemon must neither stop early nor cut the replies it drains.
+	if s.frozen {
+		return false
+	}
 	for pid := range s.pids {
 		if !alive(pid) {
 			s.drop(pid)
@@ -545,10 +558,11 @@ func (s *sessionSet) isFrozen() bool {
 	return s.frozen
 }
 
-// adopt takes over the sessions a predecessor handed over. Windows it never met, which only send requests, count as unplaced, so they keep the daemon up for idleGrace as they did there.
+// adopt takes over the sessions a predecessor handed over, in place of whatever the disk holds. Windows it never met, which only send requests, count as unplaced, so they keep the daemon up for idleGrace as they did there.
 func (s *sessionSet) adopt(h *Handover, alive func(int) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.optIns, s.projects = map[string]*optIn{}, map[string]bool{}
 	for _, pid := range h.PIDs {
 		if alive(pid) && s.pids[pid] == nil {
 			s.pids[pid] = map[string]bool{}

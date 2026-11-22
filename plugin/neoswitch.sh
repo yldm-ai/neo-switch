@@ -7,15 +7,25 @@ export NEOSWITCH_PLUGIN=1
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/neoswitch"
 bin="$cache/neoswitch-$(printf '%s' "$root" | cksum | cut -d' ' -f1)"
-# Hooks that run after every reply or as a session ends pass --cached: they run whichever NeoSwitch binary is already here, even one older than the plugin source, and otherwise do nothing, rather than build or download in the middle of the user's session.
+# Hooks that run after every reply or as a session ends pass --cached: they run this plugin's binary when it is here, otherwise the latest release cached, even one older than the plugin source, and otherwise do nothing, rather than build or download in the middle of the user's session. The latest matters for a window whose plugin was updated meanwhile: its hooks then start the takeover that moves every open window to the update (docs/design-session-routing.md, "Updates").
 if [ "${1:-}" = "--cached" ]; then
 	shift
-	for cached in "$bin" "$cache"/neoswitch-*; do
+	if [ -f "$bin" ] && [ -x "$bin" ]; then
+		exec "$bin" "$@"
+	fi
+	latest=
+	for cached in "$cache"/neoswitch-*; do
 		case $cached in *.tmp) continue ;; esac
 		if [ -f "$cached" ] && [ -x "$cached" ]; then
-			exec "$cached" "$@"
+			# A binary that predates is-newer fails it, so a later release is never passed over for it.
+			if [ -z "$latest" ] || "$cached" is-newer "$("$cached" version 2>/dev/null | cut -d' ' -f2)" "$("$latest" version 2>/dev/null | cut -d' ' -f2)" 2>/dev/null; then
+				latest=$cached
+			fi
 		fi
 	done
+	if [ -n "$latest" ]; then
+		exec "$latest" "$@"
+	fi
 	exit 0
 fi
 if [ -x "$bin" ] && [ -z "$(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" \( -name '*.go' -o -name 'go.*' \) -print 2>/dev/null | head -n 1)" ]; then

@@ -304,12 +304,14 @@ func serveSession(dir string, state *daemon.State, session daemon.Session) (noti
 			return movingNote(), nil
 		}
 	case replaceLegacy:
-		if stopLegacyDaemon(*state) == nil {
-			if _, err := daemon.AttachSession(*state, session, spawn); err != nil {
-				return "", fmt.Errorf("NeoSwitch could not start after stopping the earlier version (details are in %s)", filepath.Join(dir, "daemon.log"))
-			}
-			return "NeoSwitch: every open window now uses " + version + ". A reply that was still in progress in another window stopped; ask again there. Each Gemini conversation reads itself again on its next reply, which takes longer once.", nil
+		stopErr := stopLegacyDaemon(*state)
+		if stopErr != nil {
+			return "NeoSwitch: other Claude Code windows still use " + versionOrUnknown(info.Version) + " of NeoSwitch, which could not be stopped (" + strings.TrimSuffix(stopErr.Error(), ".") + "), so this session uses it too. " + closeWindowsHint("NeoSwitch "+version), nil
 		}
+		if _, err := daemon.AttachSession(*state, session, spawn); err != nil {
+			return "", fmt.Errorf("NeoSwitch could not start after stopping the earlier version (details are in %s)", filepath.Join(dir, "daemon.log"))
+		}
+		return "NeoSwitch: every open window now uses " + version + ". A reply that was still in progress in another window stopped; ask again there. Each Gemini conversation reads itself again on its next reply, which takes longer once.", nil
 	}
 	if info.Backend != "" && info.Backend != label || daemon.NewerVersion(version, info.Version) || info.Version == "" || info.Model != "" && info.Model != model {
 		return attachNotice("", model, label, info, running, false), nil
@@ -558,7 +560,7 @@ func attach(args []string) error {
 		}
 		return message("NeoSwitch could not start, so this session cannot answer. Start a new Claude Code session, which uses Claude. Details are in " + filepath.Join(dir, "daemon.log") + ".")
 	}
-	// The first session of a new version moves the open windows to it. The hook before every prompt does it too, in windows whose own binary is gone from the cache, which then run the newest one (neoswitch.sh --cached).
+	// The first session of a new version moves the open windows to it. The hook before every prompt does it too, in windows whose own binary is gone from the cache, which then run the latest one cached (neoswitch.sh --cached).
 	moving := ""
 	if info, running := daemon.Status(state); running && (info.Version == "" || daemon.NewerVersion(version, info.Version)) {
 		if _, model, label, err := configuredBackend(context.Background()); err == nil && planTakeover(dir, info, label, model, false) == handOver && startTakeover(dir, false) {

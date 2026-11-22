@@ -75,6 +75,7 @@ func acceptsSuccessor(own, successor string, explicit bool) bool {
 }
 
 func handoverKeyPath(dir string) string    { return filepath.Join(dir, "handover.key") }
+func handingOverPath(dir string) string    { return filepath.Join(dir, "handing-over") }
 func takeoverLockPath(dir string) string   { return filepath.Join(dir, "takeover.lock") }
 func failedTakeoverPath(dir string) string { return filepath.Join(dir, "takeover-failed") }
 
@@ -113,17 +114,14 @@ func handoverKey(dir string) (string, error) {
 	return "", fmt.Errorf("read %s", path)
 }
 
-// acquireTakeoverLock makes this process the only one taking over. A lock older than takeoverLockAge, or of a process that is gone, was left by a crash and is taken.
+// acquireTakeoverLock makes this process the only one taking over. A lock older than takeoverLockAge, or of a process that is gone, was left by a crash and is taken. release removes the lock only while it is still this process's, so a contender that took a stale lock at the same moment cannot remove the winner's.
 func acquireTakeoverLock(dir string) (release func(), ok bool) {
 	path := takeoverLockPath(dir)
 	for attempt := 0; attempt < 2; attempt++ {
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			_, _ = file.WriteString(strconv.Itoa(os.Getpid()) + "\n")
-			_ = file.Close()
-			return func() { _ = os.Remove(path) }, true
+		if writePIDFile(path, true) == nil {
+			return func() { removeOwnPIDFile(path) }, true
 		}
-		if !errors.Is(err, fs.ErrExist) || takeoverInProgress(dir) {
+		if heldByLiveProcess(path) {
 			return nil, false
 		}
 		_ = os.Remove(path)
@@ -131,19 +129,55 @@ func acquireTakeoverLock(dir string) (release func(), ok bool) {
 	return nil, false
 }
 
-// takeoverInProgress reports whether a NeoSwitch process is taking over: while it holds the lock, the port may be free for a moment, and a session that finds it free must wait for the successor rather than start a daemon of its own.
+// takeoverInProgress reports whether a handover is under way: while a successor holds the lock, or its predecessor has just frozen, the port may be free for a moment, and a session that finds it free must wait for the successor rather than start a daemon of its own, which would take the port and keep the predecessor from taking it back.
 func takeoverInProgress(dir string) bool {
-	path := takeoverLockPath(dir)
+	return heldByLiveProcess(takeoverLockPath(dir)) || heldByLiveProcess(handingOverPath(dir))
+}
+
+// beginHandingOver marks that this daemon froze for a successor; endHandingOver clears the mark once the successor answers or the daemon took its port back.
+func beginHandingOver(dir string) { _ = writePIDFile(handingOverPath(dir), false) }
+func endHandingOver(dir string)   { removeOwnPIDFile(handingOverPath(dir)) }
+
+// writePIDFile writes this process's ID to path, failing when path exists if exclusive.
+func writePIDFile(path string, exclusive bool) error {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if exclusive {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = file.WriteString(strconv.Itoa(os.Getpid()) + "\n")
+	if cerr := file.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+func filePID(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return pid
+}
+
+func removeOwnPIDFile(path string) {
+	if filePID(path) == os.Getpid() {
+		_ = os.Remove(path)
+	}
+}
+
+// heldByLiveProcess reports whether path is a recent PID file of a running process; older ones were left by a crash.
+func heldByLiveProcess(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil || time.Since(info.ModTime()) > takeoverLockAge {
 		return false
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	return err == nil && processAlive(pid)
+	pid := filePID(path)
+	return pid > 1 && processAlive(pid)
 }
 
 // TakeoverFailedRecently reports whether version tried to take over lately and its predecessor had to take the port back.
@@ -210,6 +244,7 @@ func handoverHandler(s State, sessions *sessionSet, own string, successor chan<-
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		beginHandingOver(s.dir)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(h)
 		successor <- body.Version

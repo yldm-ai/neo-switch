@@ -49,19 +49,24 @@ func startTakeover(dir string, explicit bool) bool {
 	return spawnDaemon(dir, args...) == nil
 }
 
-// movingNote tells the session that started a takeover what the other windows will notice.
+// movingNote tells the session that started a takeover what the other windows will notice. The takeover runs on after the hook returns, so it is announced, not confirmed; /neoswitch:status says which version serves the windows.
 func movingNote() string {
-	return "NeoSwitch: moving every open window to " + version + " now. Each Gemini conversation reads itself again on its next reply, which takes longer once."
+	return "NeoSwitch: handing every open window over to " + version + ". Each Gemini conversation then reads itself again on its next reply, which takes longer once."
 }
 
-// moveWindowsHint tells how the user moves the open windows to target, a version or setup, themselves.
+// moveWindowsHint tells how the user moves the open windows to target, a version or setup, themselves. /neoswitch:on is offered only where it would do it: never on a platform without handovers, and never over a daemon of a later release, which this NeoSwitch does not replace.
 func moveWindowsHint(info daemon.Info, target string) string {
 	switch {
-	case !daemon.HandoverSupported():
-		return "To use " + target + ", close every Claude Code window of a project that uses NeoSwitch, open Claude Code again and run /neoswitch:on."
+	case !daemon.HandoverSupported() || daemon.NewerVersion(info.Version, version):
+		return closeWindowsHint(target)
 	case info.Handover >= daemon.HandoverProtocol:
 		return "Run /neoswitch:on here to move every open window to " + target + "."
 	default:
 		return "Run /neoswitch:on here to move every open window to " + target + "; a reply still in progress in another window stops."
 	}
+}
+
+// closeWindowsHint is the way to target that always works.
+func closeWindowsHint(target string) string {
+	return "To use " + target + ", close every Claude Code window of a project that uses NeoSwitch, open Claude Code again and run /neoswitch:on."
 }

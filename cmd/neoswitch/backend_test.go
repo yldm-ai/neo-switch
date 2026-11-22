@@ -341,6 +341,8 @@ func TestAttachNotice(t *testing.T) {
 		{"earlier version", "", agy, daemon.Info{Backend: agy, Version: "v0.0.1"}, true, "still use v0.0.1 of NeoSwitch, so this session does too. Run /neoswitch:on here to move every open window to NeoSwitch v0.4.5; a reply still in progress in another window stops."},
 		{"earlier version that hands over", "", agy, daemon.Info{Backend: agy, Version: "v0.4.4", Handover: daemon.HandoverProtocol}, true, "Run /neoswitch:on here to move every open window to NeoSwitch v0.4.5."},
 		{"later version", "", agy, daemon.Info{Backend: agy, Version: "v0.9.0"}, true, "this session uses Gemini 4 Neon through"},
+		// /neoswitch:on does not replace a later release, so offering it would only repeat this note.
+		{"later version with another model", "", agy, daemon.Info{Backend: agy, Version: "v0.9.0", Model: "gemini-3.8-flash", Handover: daemon.HandoverProtocol}, true, "To use Gemini 4 Neon, close every Claude Code window of a project that uses NeoSwitch"},
 		{"daemon without version", "", agy, daemon.Info{Backend: agy}, true, "still use an earlier version of NeoSwitch"},
 		{"gateway notice only", "NeoSwitch: gateway.", agy, daemon.Info{Backend: agy, Version: version}, true, "NeoSwitch: gateway."},
 		{"tracked project", "", agy, daemon.Info{Backend: agy, Version: version}, true, "/neoswitch:off continues this session on Claude."},
