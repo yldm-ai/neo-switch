@@ -45,6 +45,9 @@ func main() {
 		err = off(os.Args[2:])
 	case "status":
 		err = status(os.Args[2:])
+	case "label":
+		label(os.Stdout)
+		return
 	case "backend":
 		err = backendCommand(os.Args[2:])
 	case "sign-in-check":

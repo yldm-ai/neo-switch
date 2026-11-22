@@ -77,6 +77,7 @@ func (g *Gemini) BackendName() string {
 
 // Generate sends the request with its thinking level. If the model rejects the level, the request is sent once more without it.
 func (g *Gemini) Generate(ctx context.Context, req translate.Request) (*genai.GenerateContentResponse, error) {
+	req = identified(req)
 	config, leveled := g.generateConfig(req)
 	resp, err := g.client.Models.GenerateContent(ctx, g.Model, req.Contents, config)
 	if leveled && g.rejectedThinkingLevel(err) {
@@ -87,6 +88,7 @@ func (g *Gemini) Generate(ctx context.Context, req translate.Request) (*genai.Ge
 
 // Stream sends the request with its thinking level. If the model rejects the level before the first chunk, the request is sent once more without it; an error after a chunk was yielded is passed through, because the caller has already forwarded output.
 func (g *Gemini) Stream(ctx context.Context, req translate.Request) iter.Seq2[*genai.GenerateContentResponse, error] {
+	req = identified(req)
 	return func(yield func(*genai.GenerateContentResponse, error) bool) {
 		config, leveled := g.generateConfig(req)
 		retry := false
@@ -109,6 +111,25 @@ func (g *Gemini) Stream(ctx context.Context, req translate.Request) iter.Seq2[*g
 			}
 		}
 	}
+}
+
+// ModelIdentity tells the model answering through NeoSwitch that the model Claude Code's system prompt names is not necessarily it: the prompt names the Claude model the session asks for, and a model told so answers questions about itself as that model. It names no model, so it stays true for requests another model answers, such as the background model's, and it never changes, so the cached prefix of the instructions stays the same.
+const ModelIdentity = "Where these instructions name the model you run on, that is the name Claude Code shows for the session, which NeoSwitch answers with another model; about yourself, say what you know of yourself."
+
+// identified opens the request's system instructions with ModelIdentity, on a copy: the shared request is never modified. It goes first, before Claude Code's text and the system messages appended to it during a conversation, so the instructions keep one stable prefix.
+func identified(req translate.Request) translate.Request {
+	config := genai.GenerateContentConfig{}
+	if req.Config != nil {
+		config = *req.Config
+	}
+	system := genai.Content{}
+	if config.SystemInstruction != nil {
+		system = *config.SystemInstruction
+	}
+	system.Parts = append([]*genai.Part{genai.NewPartFromText(ModelIdentity)}, system.Parts...)
+	config.SystemInstruction = &system
+	req.Config = &config
+	return req
 }
 
 // generateConfig returns the config to send and whether it carries the request's thinking level. The level is set on a copy so the shared request config is never modified. It is left out when the request names none or when this model has already rejected one. The per-level support of each model was not verified against the live API, which is why a rejection drops the level instead of failing the request.
@@ -138,6 +159,7 @@ func (g *Gemini) rejectedThinkingLevel(err error) bool {
 
 // CountTokens counts the prompt as Gemini would see it. Vertex AI accepts the system instruction and tools directly. The Gemini Developer API countTokens call through genai accepts contents only, so there the system instruction and the tool declarations are prepended as text contents: the result is an estimate that can differ from the billed count by the framing tokens Gemini adds around them.
 func (g *Gemini) CountTokens(ctx context.Context, req translate.Request) (int, error) {
+	req = identified(req)
 	contents := req.Contents
 	var config *genai.CountTokensConfig
 	if g.client.ClientConfig().Backend == genai.BackendVertexAI {

@@ -859,3 +859,28 @@ func gitIgnored(project, path string) (ignored, known bool) {
 	}
 	return false, false
 }
+
+// label prints the line the plugin's mod pins under the prompt while this session's model requests go to Gemini, and nothing otherwise: Claude Code's header keeps naming the Claude model the session asks for. It asks the daemon, which decides where each session's requests go, so the line stays true after a switch made any other way, and it starts nothing.
+func label(w io.Writer) {
+	session := currentSession()
+	if session.id == "" || session.gateway {
+		return
+	}
+	dir, err := daemon.Dir()
+	if err != nil {
+		return
+	}
+	state, ok, err := daemon.LoadState(dir)
+	if err != nil || !ok {
+		return
+	}
+	info, running := daemon.StatusOf(state, session.id)
+	if !running || !info.OptedIn {
+		return
+	}
+	name := "Gemini"
+	if info.Model != "" {
+		name = modelName(info.Model)
+	}
+	fmt.Fprintf(w, "NeoSwitch: %s answers this session\n", name)
+}
