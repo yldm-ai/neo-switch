@@ -487,6 +487,7 @@ func attach(args []string) error {
 	pid := flags.Int("pid", 0, "Claude Code process to serve")
 	session := flags.String("session", "", "its session id")
 	quiet := flags.Bool("quiet", false, "only make sure the daemon runs, as before every prompt")
+	mode := flags.String("mode", "", "the session's permission mode, as the hook before a prompt reads it")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -568,6 +569,9 @@ func attach(args []string) error {
 		}
 	}
 	if *quiet {
+		if opted && autoModeUnchecked(*mode, os.Getenv(autoModeServerEnv)) && firstAutoModeNote(dir, *session) {
+			return hookMessage(autoModeNote)
+		}
 		return nil
 	}
 	if !opted {

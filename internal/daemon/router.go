@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// router decides, for every request a routed session sends, whether Gemini answers it. Only the model requests of sessions that ran /neoswitch:on go to the Gemini proxy; everything else, such as the request of another window that applied the project settings, or of a session that ran /neoswitch:off, passes through to Anthropic with the user's own credential, so it keeps answering with Claude.
+// router decides, for every request a routed session sends, whether Gemini answers it. Only the model requests of sessions that ran /neoswitch:on go to the Gemini proxy, except auto mode's safety check (autocheck.go); everything else, such as the request of another window that applied the project settings, or of a session that ran /neoswitch:off, passes through to Anthropic with the user's own credential, so it keeps answering with Claude.
 type router struct {
 	state       State
 	sessions    *sessionSet
@@ -34,6 +34,12 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Header.Del(TokenHeader)
 	if rt.sessions.sawRequest(r.Header.Get(sessionHeader)) && modelRequest(r) {
+		if rt.passthrough != nil {
+			if check, body := autoModeCheck(r); check {
+				rt.judgeWithClaude(w, r, body)
+				return
+			}
+		}
 		// The user's Claude credential stays out of the Gemini side.
 		r.Header.Del("Authorization")
 		r.Header.Del("X-Api-Key")

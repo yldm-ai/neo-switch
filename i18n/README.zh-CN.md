@@ -46,6 +46,7 @@ NeoSwitch 让 Claude Code 改用 Google 的 Gemini 4 Neon 模型来回答，Clau
 - 每次回答可能要等 5 到 40 秒才出现第一个字，这是正常的。如果你是用 `/neoswitch:login` 登录的，输入 `/effort low` 可以让回答更快开始。
 - 安装或更新后的第一条 NeoSwitch 命令可能要等上一分钟，NeoSwitch 在做准备。
 - 随时可以运行 `/neoswitch:status`，它会告诉你当前会话用的是 Claude 还是 Gemini 4 Neon，以及下一步该做什么。
+- 在使用 Gemini 4 Neon 的会话里用 auto mode，需要用 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` 启动 Claude Code。auto mode 平时的安全检查在 Anthropic 的服务器上运行，服务器看不到 Gemini 做了什么，所以 Claude Code 会在每次操作前停下来问你；会有一条提示告诉你一次。这样启动后，Claude Code 改由 Claude 检查每个操作：NeoSwitch 把这些检查连同它们要判断的对话，用你的 Claude 登录发给 Claude（会用掉一些 Claude 用量），只有 Claude 不应答时才交给 Gemini。如果 Claude Code 随后说 auto mode 没有自己的检查，说明你的账号无法在 Gemini 会话里用 auto mode，请按 Shift+Tab 换一种模式。
 - 有新版 NeoSwitch 时，会话开头的提示会告诉你，并给出更新命令。打开了自动更新的话，Claude Code 会自己装好新版；已经开着的窗口在有新的 Claude Code 会话启动时就会换到新版。Windows 上要关掉所有 Claude Code 窗口再重新打开后才生效。
 
 ## 出了问题怎么办
