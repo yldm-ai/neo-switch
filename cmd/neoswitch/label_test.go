@@ -17,7 +17,7 @@ func TestLabelFollowsTheSession(t *testing.T) {
 	}
 	mustOn(t, project)
 	label(&out)
-	if out.String() != "NeoSwitch: Gemini 4 Neon answers this session\n" {
+	if out.String() != "Gemini 4 Neon answers this session\n" {
 		t.Fatalf("label after /neoswitch:on: %q", out.String())
 	}
 	if err := off([]string{project}); err != nil {
