@@ -882,5 +882,6 @@ func label(w io.Writer) {
 	if info.Model != "" {
 		name = modelName(info.Model)
 	}
-	fmt.Fprintf(w, "NeoSwitch: %s answers this session\n", name)
+	// Claude Code shows the line under the plugin's name, so it does not repeat it.
+	fmt.Fprintf(w, "%s answers this session\n", name)
 }

@@ -214,7 +214,7 @@ async function refreshLabel($: EngineInterface): Promise<void> {
     const ran = await $.process.run([`${env.CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh`, '--cached', 'label'], { cwd: env.CLAUDE_PROJECT_DIR, env, timeoutMs: 10_000 })
     const line = ran.stdout.trim()
     // A binary from before the command prints its usage and fails.
-    if (ran.exitCode !== 0 || (line !== '' && (!line.startsWith('NeoSwitch: ') || line.includes('\n')))) return
+    if (ran.exitCode !== 0 || (line !== '' && (!line.endsWith(' answers this session') || line.includes('\n')))) return
     $.ui.status(line === '' ? undefined : line)
     labelled = line !== ''
   } catch {
