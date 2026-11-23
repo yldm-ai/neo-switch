@@ -28,10 +28,28 @@ if [ "${1:-}" = "--cached" ]; then
 	fi
 	exit 0
 fi
-if [ -x "$bin" ] && [ -z "$(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" \( -name '*.go' -o -name 'go.*' \) -print 2>/dev/null | head -n 1)" ]; then
+current() {
+	[ -x "$bin" ] && [ -z "$(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" \( -name '*.go' -o -name 'go.*' \) -print 2>/dev/null | head -n 1)" ]
+}
+version=v$(tr -d ' \t\r\n' <"$root/VERSION")
+# --ready exits 0 when a run would start at once, and 1 when it would first build or download NeoSwitch, so the plugin's mod can say so before a wait of up to a minute.
+if [ "${1:-}" = "--ready" ]; then
+	if current; then
+		exit 0
+	fi
+	if ! command -v go >/dev/null 2>&1; then
+		for downloaded in "$cache"/neoswitch-"$version"-*; do
+			case $downloaded in *.tmp) continue ;; esac
+			if [ -x "$downloaded" ]; then
+				exit 0
+			fi
+		done
+	fi
+	exit 1
+fi
+if current; then
 	exec "$bin" "$@"
 fi
-version=v$(tr -d ' \t\r\n' <"$root/VERSION")
 preparing="NeoSwitch: getting ready after an install or update; this can take up to a minute."
 
 # prune removes the binaries of other plugin versions from the cache, keeping $1, the one about to run, builds or downloads still in progress, and binaries of later releases: a window still running an earlier plugin rebuilds its own binary when the user clears or resumes a session there, and removing the update then would put every window's hooks back on the earlier release. A daemon started from a removed binary keeps running until a later release takes its port over (see docs/design-session-routing.md, "Updates").

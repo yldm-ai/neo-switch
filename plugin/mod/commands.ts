@@ -119,33 +119,32 @@ async function commandEnv($: EngineInterface): Promise<Record<string, string>> {
   return { ...env, NEOSWITCH_DIALOG: '1' }
 }
 
-// run runs the plugin's CLI, showing its progress and warnings as they come: the first run after an install or update builds or downloads NeoSwitch, and a first sign-in installs agy, either of which can take minutes.
+// run runs the plugin's CLI and shows its progress and warnings once it is done. It is one $.process.run call, not a stream: a hook gets 10 s of its own time, and the time spent reading a spawned process's stream counts, while a $ call in flight does not, so the first run after an install or update, which builds or downloads NeoSwitch, or a first sign-in, which installs agy, was cut off. Those can take minutes; ready() says so before.
 async function run($: EngineInterface, env: Record<string, string>, args: string[], input?: string): Promise<Ran> {
-  const stream = $.process.spawn({
-    argv: [`${env.CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh`, ...args],
+  const script = `${env.CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh`
+  if (!(await ready($, env, script))) $.ui.log('NeoSwitch: getting ready after an install or update; this can take up to a minute.')
+  const ran = await $.process.run([script, ...args], {
     cwd: env.CLAUDE_PROJECT_DIR,
     env,
-    ...(input === undefined ? {} : { input }),
+    timeoutMs: 600_000,
+    ...(input === undefined ? {} : { stdin: input }),
   })
-  let stdout = ''
-  let partial = ''
   const errors: string[] = []
-  const show = (line: string) => {
+  for (const line of ran.stderr.split('\n')) {
     if (line.startsWith(ERROR_PREFIX)) errors.push(line.slice(ERROR_PREFIX.length))
-    else if (line.trim() !== '') $.ui.log(line)
+    // The CLI repeats the heads-up ready() already gave.
+    else if (line.trim() !== '' && !line.startsWith('NeoSwitch: getting ready')) $.ui.log(line)
   }
-  for await (const piece of stream) {
-    if (piece.stream === 'stdout') {
-      stdout += piece.text
-      continue
-    }
-    const lines = (partial + piece.text).split('\n')
-    partial = lines.pop() ?? ''
-    lines.forEach(show)
+  return { code: ran.exitCode, stdout: ran.stdout, errors }
+}
+
+// ready reports whether the CLI starts at once; any problem counts as ready, so it never adds a note of its own.
+async function ready($: EngineInterface, env: Record<string, string>, script: string): Promise<boolean> {
+  try {
+    return (await $.process.run([script, '--ready'], { cwd: env.CLAUDE_PROJECT_DIR, env, timeoutMs: 10_000 })).exitCode === 0
+  } catch {
+    return true
   }
-  show(partial)
-  const { code } = await stream.result
-  return { code, stdout, errors }
 }
 
 // answer shows what the CLI said; command is the one to run again when it stopped without saying why.
