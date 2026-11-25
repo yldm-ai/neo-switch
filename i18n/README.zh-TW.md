@@ -10,6 +10,16 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 
 開關以專案為單位，你的其他專案繼續使用 Claude。外掛支援 macOS 和 Linux，暫不支援 Windows。
 
+## 與其他方案的差異
+
+| | **NeoSwitch** | **設定管理 / 路由工具**<br>（如 CC Switch、Claude Code Router） | **獨立 Antigravity 代理**<br>（如 antigravity-claude-proxy） |
+|---|---|---|---|
+| **安裝形態** | Claude Code 原生外掛，無須桌面應用程式或常駐服務維運 | 獨立桌面應用程式，統一管理多種 CLI 設定 | 獨立 Node.js 代理服務 + Web 控制台 |
+| **切換粒度** | **按單一工作階段切換**（`/neoswitch:on`、`/neoswitch:off`），其他視窗照常使用 Claude | 全域切換供應商或共用本地路由 | 修改全域 `~/.claude/settings.json` 或環境變數 |
+| **原生功能保留** | **完整保留**——不設定 `ANTHROPIC_AUTH_TOKEN`，claude.ai 連接器與 auto mode 安全檢查照常運作 | 由外部設定或路由器接管 | 寫入 `ANTHROPIC_AUTH_TOKEN`，會導致 claude.ai 連接器停用 |
+| **Google 登入與憑證** | 透過官方 `agy` 使用 Google 帳號，**不讀取、不儲存、不重放 OAuth 權杖**，並封鎖 `agy` 內建工具 | 以 API Key 與第三方中轉為主（未內建 `agy` 整合） | 代理自行儲存或讀取本地 OAuth 權杖，直連私有端點 |
+| **最適合誰** | 主力使用官方 Claude Code，希望隨時在單一工作階段切到 Gemini 4 Neon | 在單一介面集中管理多款 CLI、API Key、中轉與 MCP | 需要多帳號輪詢、Windows 支援，或透過 Antigravity 使用 Claude 模型 |
+
 ## 三步上手
 
 **1. 安裝外掛。** 在 Claude Code 裡依序執行下面兩行，一次一行。每行請整行複製：第一行寫的是 `neo-switch`，第二行是 `neoswitch`。

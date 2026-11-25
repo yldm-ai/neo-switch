@@ -10,6 +10,16 @@ Mit NeoSwitch antwortet in Claude Code das Modell Gemini 4 Neon von Google statt
 
 Sie schalten jeweils ein Projekt um; Ihre anderen Projekte nutzen weiter Claude. Das Plugin läuft unter macOS und Linux. Windows wird noch nicht unterstützt.
 
+## Vergleich mit anderen Ansätzen
+
+| | **NeoSwitch** | **Konfigurationsmanager & Router**<br>(z. B. CC Switch, Claude Code Router) | **Eigenständige Antigravity-Proxies**<br>(z. B. antigravity-claude-proxy) |
+|---|---|---|---|
+| **Einrichtung** | Natives Claude-Code-Plugin — keine Desktop-App und kein separater Server nötig | Eigene Desktop-App zur Verwaltung mehrerer CLIs | Eigenständiger Node.js-Proxy-Server + Web-UI |
+| **Wirkungsbereich** | **Eine Sitzung auf einmal** (`/neoswitch:on`, `/neoswitch:off`); andere Fenster bleiben bei Claude | Globaler Anbieterwechsel oder gemeinsamer lokaler Router | Globale `~/.claude/settings.json` oder Shell-Umgebungsvariablen |
+| **Claude-Code-Funktionen** | **Bleiben erhalten** — kein `ANTHROPIC_AUTH_TOKEN`, sodass claude.ai-Konnektoren und Auto-Mode-Prüfungen weiter funktionieren | Verwaltung über externe Konfiguration oder Router | Setzt `ANTHROPIC_AUTH_TOKEN`, wodurch claude.ai-Konnektoren deaktiviert werden |
+| **Google-Anmeldung** | Nutzt Ihr Google-Konto über das offizielle `agy` — **liest, speichert und wiederholt keine OAuth-Tokens**; eigene `agy`-Tools werden blockiert | Vorwiegend API-Schlüssel und Drittanbieter-Relays (keine `agy`-Integration) | Speichert oder liest lokale OAuth-Tokens für direkte Aufrufe privater Endpunkte |
+| **Am besten für** | Normale Claude-Code-Nutzung mit gezieltem Wechsel einzelner Sitzungen auf Gemini 4 Neon | Zentrale Verwaltung vieler CLIs, API-Schlüssel, Relays und MCPs | Multi-Account-Rotation, Windows oder Claude-Modelle über Antigravity |
+
 ## Loslegen
 
 **1. Plugin installieren.** Führen Sie in Claude Code diese beiden Zeilen nacheinander aus. Kopieren Sie jede Zeile vollständig: In der ersten steht `neo-switch`, in der zweiten `neoswitch`.
