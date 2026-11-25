@@ -211,7 +211,7 @@ func decodeSearchAnswer(raw string, into *searchAnswer) error {
 	}
 	err := json.NewDecoder(strings.NewReader(clean)).Decode(into)
 	if err != nil {
-		err = json.NewDecoder(strings.NewReader(escapeControlInStrings(clean))).Decode(into)
+		err = json.NewDecoder(strings.NewReader(repairJSONStrings(clean))).Decode(into)
 	}
 	return err
 }

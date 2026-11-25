@@ -104,7 +104,7 @@ func (s *acpSession) toolCallCount() int {
 	return len(s.toolCalls)
 }
 
-// historyKeys identifies every prefix of a conversation: keys[m] is the key of contents[:m]. A key covers what reaches the model: the text of each message, its attachments, and its tool calls and results with their IDs. Thought signatures, Claude Code's cache markers and the split of a text into blocks do not matter, so a model turn hashes the same whether NeoSwitch built it from agy's answer or translated it from the copy Claude Code sends back.
+// historyKeys identifies every prefix of a conversation: keys[m] is the key of contents[:m]. A key covers what reaches the model: the text of each message, its attachments, its tool calls by ID and name, and its tool results with their IDs. Thought signatures, Claude Code's cache markers and the split of a text into blocks do not matter, so a model turn hashes the same whether NeoSwitch built it from agy's answer or translated it from the copy Claude Code sends back.
 func historyKeys(contents []*genai.Content) []string {
 	h := sha256.New()
 	keys := make([]string, 0, len(contents)+1)
@@ -146,7 +146,12 @@ func writeContent(h hash.Hash, content *genai.Content) {
 			writeBlob(h, part.InlineData.MIMEType, part.InlineData.Data)
 		}
 		if call := part.FunctionCall; call != nil {
-			writeField(h, "call", call.ID+"\x00"+call.Name+"\x00"+canonicalJSON(call.Args))
+			// A call is identified by its ID, which is unique, and not by its input: Claude Code sends back the input as its tool read it, not as the model wrote it. Its Edit tool, for one, adds "replace_all": false, so keying on the input loses the session after every edit.
+			args := ""
+			if call.ID == "" {
+				args = canonicalJSON(call.Args)
+			}
+			writeField(h, "call", call.ID+"\x00"+call.Name+"\x00"+args)
 		}
 		if response := part.FunctionResponse; response != nil {
 			writeField(h, "result", response.ID+"\x00"+response.Name+"\x00"+canonicalJSON(response.Response))

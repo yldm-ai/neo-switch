@@ -206,6 +206,15 @@ func (a *AntigravityACP) Generate(ctx context.Context, req translate.Request) (*
 		return nil, err
 	}
 	parts, exact, err := acpAnswerParts(raw.String(), x.result)
+	if malformed := (*malformedToolUseError)(nil); errors.As(err, &malformed) {
+		raw.Reset()
+		if err := a.repairToolUse(ctx, x, req, malformed, func(text string) { raw.WriteString(text) }); err != nil {
+			return nil, err
+		}
+		parts, _, err = acpAnswerParts(raw.String(), x.result)
+		exact = false
+		err = secondMalformed(err)
+	}
 	x.end(parts, exact && err == nil)
 	if err != nil {
 		return nil, err
@@ -240,6 +249,8 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 		var (
 			received bool
 			x        *acpExchange
+			// repaired is set once the session was asked to write a malformed tool call again.
+			repaired bool
 		)
 		defer func() {
 			cancel()
@@ -286,6 +297,27 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 					return
 				}
 				parts, err := decoder.finish(x.result)
+				if malformed := (*malformedToolUseError)(nil); errors.As(err, &malformed) && !repaired {
+					// The tool call has not reached Claude Code, so the same session writes it again. Text streamed before it stays shown: the new answer is buffered, and finish delivers only what it adds to that text.
+					repaired, received = true, false
+					streamed := decoder.emitted.String()
+					decoder = envelopeDecoder{mode: envelopeBuffered}
+					decoder.emitted.WriteString(streamed)
+					go func(x *acpExchange) {
+						err := a.repairToolUse(ctx, x, req, malformed, queue.push)
+						if err != nil {
+							// repairToolUse already closed the session and released agy, as run does when it fails.
+							x = nil
+						}
+						done <- outcome{x, err}
+					}(x)
+					x = nil
+					continue
+				}
+				if repaired {
+					err = secondMalformed(err)
+					decoder.exact = false
+				}
 				if err != nil {
 					yield(nil, err)
 					return
@@ -364,6 +396,31 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 		}
 	}
 	return x, nil
+}
+
+// acpToolUseRepair asks a session whose answer was a malformed tool call to write it again; %s is what was wrong.
+const acpToolUseRepair = "Your last answer started a tool call but was not valid JSON (%s), so Claude Code could not run it. Write the same answer again as exactly one JSON object and no markdown: {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}, optionally with \"text\". Inside JSON strings, escape every double quote as \\\" and every literal backslash as \\\\.\n\n"
+
+// repairToolUse sends acpToolUseRepair to the session that wrote a malformed tool call and passes the new answer to onText. Like run, it closes the session and releases agy when it fails.
+func (a *AntigravityACP) repairToolUse(ctx context.Context, x *acpExchange, req translate.Request, malformed *malformedToolUseError, onText func(string)) error {
+	acpLogger.Warn("Antigravity answered with a malformed tool call; asking it to write the call again", "error", malformed.cause)
+	result, err := a.prompt(ctx, x.c, x.session, acpPiece{text: fmt.Sprintf(acpToolUseRepair, malformed.cause)}, acp.SessionConfigValueId(strings.ToLower(string(req.ThinkingLevel))), answerText(onText))
+	if err != nil {
+		x.c.closeSessions([]*acpSession{x.session})
+		x.c.release()
+		return err
+	}
+	x.result = result
+	return nil
+}
+
+// secondMalformed turns a tool call that is still malformed after repairToolUse into an error Claude Code retries, which starts the request over in a new session.
+func secondMalformed(err error) error {
+	if malformed := (*malformedToolUseError)(nil); errors.As(err, &malformed) {
+		acpLogger.Warn("Antigravity wrote a malformed tool call again", "error", malformed.cause)
+		return &translate.RetryableError{Message: "Antigravity answered twice with a tool call that is not valid JSON, so Claude Code could not run it. Try again, or run /neoswitch:off to continue this session on Claude."}
+	}
+	return err
 }
 
 // acpContinued opens the prompt of a session that already holds the conversation.

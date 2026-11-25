@@ -98,9 +98,12 @@ One `agy acp` process serves the daemon. `agy` runs sessions concurrently, so su
   - **Each subagent, workflow agent and kind of background request** keeps a session of its own. A background session reads only what the main thread did since its last run, with a note to disregard its previous background exchange.
   - **Closing order:** past 16 idle sessions, sessions of main threads are closed last.
   - **Older Claude Code:** without the headers, any request may continue a session holding its conversation, so a background request can take the main thread's session.
-- **Not reused:** a session whose answer Claude Code did not receive, or that answered with something other than exactly one JSON object.
+- **Matching a conversation:** a tool call is matched by its ID and name, not its input, because Claude Code sends back the input as its tool read it. Its Edit tool adds `"replace_all": false`, for one; matching on the input lost the session, and read the whole conversation again, after every edit.
+- **Not reused:** a session whose answer Claude Code did not receive, that answered with something other than exactly one JSON object, or that had to write a tool call again.
 
 When the model writes more than one JSON object, typically the same tool call twice, NeoSwitch merges the texts and runs only the first tool call.
+
+The model writes JSON by hand, and gets string escapes wrong when a tool call holds a regular expression or a shell command. NeoSwitch repairs what it can tell apart: a backslash that starts no JSON escape (`\|`, `\.`, `\d`, `C:\users`) is kept as a backslash, a `\b` in a tool call's input stays the two characters the model meant rather than a backspace, and so does a `\f` in a command, where Claude Code would refuse a form feed (a file's real form feeds are kept). A tool call that is still not JSON, typically for an unescaped quote, is not passed on as text, which would end the turn with raw JSON on screen: the same session is asked once to write it again, and if that fails too, Claude Code retries the request. A tool call cut off by the output limit is passed on as text, since writing it again would hit the same limit.
 
 When Google refuses a request, Claude Code shows the reason in `agy`'s own words:
 
