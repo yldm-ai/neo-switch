@@ -267,11 +267,9 @@ func TestDaemonServesUntilLastSessionExits(t *testing.T) {
 	s := testState(t)
 	procs := &fakeProcs{alive: map[int]bool{}}
 	proxy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
-	done := make(chan error, 1)
+	var done <-chan error
 	spawn := func() error {
-		go func() {
-			done <- Run(context.Background(), s, proxy, Options{StartupGrace: time.Minute, PollInterval: 20 * time.Millisecond, Alive: procs.Alive, Version: "v9"})
-		}()
+		_, done = runDaemon(t, s, proxy, Options{StartupGrace: time.Minute, PollInterval: 20 * time.Millisecond, Alive: procs.Alive, Version: "v9"})
 		return nil
 	}
 
@@ -288,7 +286,10 @@ func TestDaemonServesUntilLastSessionExits(t *testing.T) {
 	}
 
 	procs.set(100, false)
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(3*time.Second, func() bool {
+		info, ok := Status(s)
+		return ok && info.Sessions == 1
+	})
 	if info, ok := Status(s); !ok || info.Sessions != 1 {
 		t.Fatalf("after one exit: %+v %v", info, ok)
 	}
@@ -321,29 +322,36 @@ func (r *releases) get() []string {
 	return slices.Clone(r.list)
 }
 
-func startDaemon(t *testing.T, s State, opts Options) (stop func(), done <-chan error) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	finished := make(chan error, 1)
-	go func() { finished <- Run(ctx, s, http.NotFoundHandler(), opts) }()
-	deadline := time.Now().Add(3 * time.Second)
+// waitUntil polls cond until it returns true or timeout passes.
+func waitUntil(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
 	for {
-		if _, ok := Status(s); ok {
-			break
+		if cond() {
+			return true
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("daemon did not start")
+			return false
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Cleanup(cancel)
+}
+
+func startDaemon(t *testing.T, s State, opts Options) (stop func(), done <-chan error) {
+	t.Helper()
+	cancel, finished := runDaemon(t, s, http.NotFoundHandler(), opts)
+	if !waitUntil(3*time.Second, func() bool {
+		_, ok := Status(s)
+		return ok
+	}) {
+		t.Fatal("daemon did not start")
+	}
 	return cancel, finished
 }
 
 // A project returns to Claude once no attached session uses it: at a detach right away, or at the next check for a session that died.
 func TestDaemonReleasesProjectWhenItsLastSessionEnds(t *testing.T) {
 	s := testState(t)
-	procs := &fakeProcs{alive: map[int]bool{100: true, 200: true, 300: true}}
+	procs := &fakeProcs{alive: map[int]bool{100: true, 200: true, 300: true, 400: true}}
 	var released releases
 	startDaemon(t, s, Options{StartupGrace: time.Minute, PollInterval: 20 * time.Millisecond, Alive: procs.Alive, Release: released.add})
 	noSpawn := func() error { t.Fatal("must reuse the running daemon"); return nil }
@@ -366,7 +374,9 @@ func TestDaemonReleasesProjectWhenItsLastSessionEnds(t *testing.T) {
 		t.Fatalf("after the last /p session detached: %v", got)
 	}
 	procs.set(300, false)
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(3*time.Second, func() bool {
+		return slices.Equal(released.get(), []string{"/p", "/q"})
+	})
 	if got := released.get(); !slices.Equal(got, []string{"/p", "/q"}) {
 		t.Fatalf("after the /q session died: %v", got)
 	}
@@ -414,19 +424,7 @@ func TestDaemonExitsWhenNobodyAttaches(t *testing.T) {
 
 func TestControlEndpointsRequireToken(t *testing.T) {
 	s := testState(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = Run(ctx, s, http.NotFoundHandler(), Options{StartupGrace: time.Minute}) }()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, ok := Status(s); ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("daemon did not start")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	startDaemon(t, s, Options{StartupGrace: time.Minute})
 	if _, ok := Status(State{Listen: s.Listen, Token: "wrong"}); ok {
 		t.Fatal("status answered without the token")
 	}

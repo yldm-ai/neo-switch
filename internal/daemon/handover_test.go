@@ -82,7 +82,10 @@ func TestNewerDaemonTakesOverSessionsWithoutReleasingThem(t *testing.T) {
 	}
 	// The window the predecessor only knew in memory still keeps the successor up after the opted-in one ends.
 	procs.set(200, false)
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(3*time.Second, func() bool {
+		info, ok := Status(s)
+		return ok && info.Sessions == 1 && len(released.get()) == 1
+	})
 	if info, ok := Status(s); !ok || info.Sessions != 1 {
 		t.Fatalf("successor after the Gemini session ended: %+v %v", info, ok)
 	}
