@@ -72,6 +72,7 @@ At the end of every turn Claude Code asks for a prompt suggestion, and it names 
 - **Thought levels:** they follow the session's model. `gemini-3.8-flash` offers no `xhigh`, so a request asking for it runs at the model's default.
 - **Fallback:** when the account's plan does not offer the background model, background requests use the main model, and the daemon log says so once.
 - **Setting:** `NEOSWITCH_BACKGROUND_MODEL` chooses another model, or `main` keeps everything on the main model.
+- **Auto Mode safeguards:** when Claude Code requests a `dangerous_tool_use` safeguard verdict for emitted tool calls, NeoSwitch runs an ephemeral, tool-free ACP session on `NEOSWITCH_SAFEGUARD_MODEL` (defaulting to the background model, then the main model) and closes it immediately so it does not take a slot in the idle session pool.
 
 ## Web search
 

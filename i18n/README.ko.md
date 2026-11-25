@@ -56,7 +56,7 @@ SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 �
 - 답의 첫 글자가 나오기까지 5~40초가 걸릴 수 있으며 정상입니다. `/neoswitch:login`으로 로그인했다면 `/effort low`로 답이 더 빨리 시작됩니다.
 - 설치나 업데이트 후 첫 NeoSwitch 명령은 준비 때문에 최대 1분쯤 걸릴 수 있습니다.
 - `/neoswitch:status`를 실행하면 이 세션이 Claude와 Gemini 4 Neon 중 무엇을 쓰는지, 다음에 무엇을 하면 되는지 언제든 알려 줍니다.
-- Gemini 4 Neon을 쓰는 세션에서 auto mode를 쓰려면 Claude Code를 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude`로 시작해야 합니다. 평소의 안전 검사는 Anthropic 서버에서 실행되는데, 서버는 Gemini가 하는 일을 보지 못하므로 Claude Code가 작업 전에 멈춰 확인을 요청합니다. 이 사실은 안내 메시지로 한 번 알려 드립니다. 이렇게 시작하면 Claude Code는 각 작업을 Claude가 검사하게 합니다. NeoSwitch는 그 검사를, 판단 대상인 대화와 함께 사용자의 Claude 로그인으로 Claude에 보내며(Claude 사용량을 일부 씁니다), Claude가 응답하지 않을 때만 Gemini에 보냅니다. 그래도 Claude Code가 auto mode에 자체 검사가 없다고 하면, 이 계정에서는 Gemini로 auto mode를 쓸 수 없습니다. Shift+Tab으로 다른 모드를 고르세요.
+- Gemini 4 Neon을 쓰는 세션에서도 auto mode가 별도 설정 없이 바로 동작합니다. NeoSwitch가 내장된 fail-closed 안전 분류기(Antigravity에서는 기본 `gemini-3.8-flash`, 다른 백엔드에서는 설정된 모델)로 각 작업을 검사하므로 Claude Code를 재시작하거나 Claude 사용량을 쓸 필요가 없습니다. 내장 검사를 끄려면 `NEOSWITCH_SAFEGUARD=off`를 설정하고, Claude 로그인으로 Claude가 직접 검사하게 하려면 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude`로 시작하세요(Claude 사용량을 일부 쓰며, Claude가 응답하지 않을 때만 Gemini로 폴백합니다).
 - 새 NeoSwitch가 나오면 세션 시작 메시지로 알려 주고 업데이트 명령을 보여 줍니다. 자동 업데이트가 켜져 있으면 Claude Code가 직접 설치하며, 이미 열려 있는 창도 새 Claude Code 세션이 시작되면 새 버전으로 넘어갑니다. Windows에서는 Claude Code 창을 모두 닫았다가 다시 열면 적용됩니다.
 
 ## 문제가 생기면

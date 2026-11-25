@@ -628,7 +628,7 @@ func attach(args []string) error {
 		}
 	}
 	if *quiet {
-		if opted && autoModeUnchecked(*mode, os.Getenv(autoModeServerEnv)) && firstAutoModeNote(dir, *session) {
+		if opted && autoModeUnchecked(*mode, os.Getenv(autoModeServerEnv), os.Getenv(autoModeSafeguardEnv)) && firstAutoModeNote(dir, *session) {
 			return hookMessage(autoModeNote)
 		}
 		return nil

@@ -67,7 +67,7 @@ func NewHandler(config Config) http.Handler {
 			return
 		}
 		if request.Stream {
-			streamMessage(ctx, w, config.Backend, translated, request.Model)
+			streamMessage(ctx, r.Context(), w, config.Backend, translated, request)
 			return
 		}
 		result, err := config.Backend.Generate(ctx, translated)
@@ -79,6 +79,9 @@ func NewHandler(config Config) http.Handler {
 		if err != nil {
 			writeUpstreamError(w, err)
 			return
+		}
+		if len(request.Safeguards) > 0 {
+			response.SafeguardResults = evaluateSafeguards(r.Context(), config.Backend, request, toolUsesFromContent(response.Content), nil)
 		}
 		writeJSON(w, http.StatusOK, response)
 	})
@@ -240,7 +243,7 @@ func requestLogger(next http.Handler) http.Handler {
 // ---- streaming ----
 
 // streamMessage relays Gemini's server-sent stream as Anthropic SSE. Nothing is written until the first Gemini chunk arrives, so a request that fails up front still gets a real HTTP status Claude Code can retry on; failures after that point are reported with an SSE error event, as Anthropic does.
-func streamMessage(ctx context.Context, w http.ResponseWriter, backend Backend, req translate.Request, model string) {
+func streamMessage(ctx, reqCtx context.Context, w http.ResponseWriter, backend Backend, req translate.Request, request anthropic.MessagesRequest) {
 	next, stop := iter.Pull2(backend.Stream(ctx, req))
 	defer stop()
 	first, err, ok := next()
@@ -252,7 +255,7 @@ func streamMessage(ctx context.Context, w http.ResponseWriter, backend Backend, 
 		writeUpstreamError(w, err)
 		return
 	}
-	s := &sseWriter{w: w, model: model}
+	s := &sseWriter{w: w, model: request.Model, reqCtx: reqCtx, backend: backend, request: request}
 	s.flusher, _ = w.(http.Flusher)
 	s.start(first)
 	if !s.chunk(first) {
@@ -278,6 +281,10 @@ type sseWriter struct {
 	w            http.ResponseWriter
 	flusher      http.Flusher
 	model        string
+	reqCtx       context.Context
+	backend      Backend
+	request      anthropic.MessagesRequest
+	toolUses     []safeguardTool
 	index        int
 	textOpen     bool
 	hasToolUse   bool
@@ -330,6 +337,7 @@ func (s *sseWriter) chunk(resp *genai.GenerateContentResponse) bool {
 				// Gemini delivers each functionCall whole in one chunk (argument streaming is opt-in and not requested), so a tool call is emitted as one complete block and Claude Code never sees partial arguments.
 				s.closeText()
 				s.hasToolUse = true
+				s.toolUses = append(s.toolUses, safeguardTool{ID: block.ID, Name: block.Name, Input: block.Input})
 				s.event("content_block_start", map[string]any{"type": "content_block_start", "index": s.index, "content_block": map[string]any{"type": "tool_use", "id": block.ID, "name": block.Name, "input": map[string]any{}}})
 				s.event("content_block_delta", map[string]any{"type": "content_block_delta", "index": s.index, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(block.Input)}})
 				s.event("content_block_stop", map[string]any{"type": "content_block_stop", "index": s.index})
@@ -362,7 +370,19 @@ func (s *sseWriter) finish() {
 			return
 		}
 	}
-	s.event("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stopReason, "stop_sequence": nil}, "usage": s.usage})
+	delta := map[string]any{"stop_reason": stopReason, "stop_sequence": nil}
+	if len(s.request.Safeguards) > 0 {
+		judgeCtx := s.reqCtx
+		if judgeCtx == nil {
+			judgeCtx = context.Background()
+		}
+		var onTick func()
+		if len(s.toolUses) > 0 {
+			onTick = func() { s.event("ping", map[string]any{"type": "ping"}) }
+		}
+		delta["safeguard_results"] = evaluateSafeguards(judgeCtx, s.backend, s.request, s.toolUses, onTick)
+	}
+	s.event("message_delta", map[string]any{"type": "message_delta", "delta": delta, "usage": s.usage})
 	s.event("message_stop", map[string]any{"type": "message_stop"})
 }
 
@@ -437,6 +457,7 @@ func searchWeb(ctx context.Context, w http.ResponseWriter, backend Backend, req 
 		writeJSON(w, http.StatusOK, anthropic.Response{
 			ID: translate.NewMessageID(), Type: "message", Role: "assistant", Model: request.Model,
 			Content: content, StopReason: "end_turn", Usage: usage,
+			SafeguardResults: emptySafeguardResults(request),
 		})
 		return
 	}
@@ -451,7 +472,11 @@ func searchWeb(ctx context.Context, w http.ResponseWriter, backend Backend, req 
 		stream.event("content_block_stop", map[string]any{"type": "content_block_stop", "index": stream.index})
 		stream.index++
 	}
-	stream.event("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": usage})
+	delta := map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}
+	if sg := emptySafeguardResults(request); len(sg) > 0 {
+		delta["safeguard_results"] = sg
+	}
+	stream.event("message_delta", map[string]any{"type": "message_delta", "delta": delta, "usage": usage})
 	stream.event("message_stop", map[string]any{"type": "message_stop"})
 }
 
