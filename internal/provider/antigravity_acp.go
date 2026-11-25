@@ -965,6 +965,13 @@ func (c *acpConn) unsubscribe(sid acp.SessionId) {
 // SessionUpdate routes an update to the request that owns the session. It runs on the SDK's single notification goroutine shared by all sessions, so sinks must not block.
 func (c *acpConn) SessionUpdate(_ context.Context, n acp.SessionNotification) error {
 	c.lastUpdate.Store(time.Now().UnixNano())
+	if commands := n.Update.AvailableCommandsUpdate; commands != nil {
+		names := make([]string, 0, len(commands.AvailableCommands))
+		for _, command := range commands.AvailableCommands {
+			names = append(names, command.Name)
+		}
+		agyCommands.add(names)
+	}
 	c.mu.Lock()
 	sink := c.sinks[n.SessionId]
 	c.mu.Unlock()

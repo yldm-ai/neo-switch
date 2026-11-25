@@ -105,6 +105,8 @@ When the model writes more than one JSON object, typically the same tool call tw
 
 The model writes JSON by hand, and gets string escapes wrong when a tool call holds a regular expression or a shell command. NeoSwitch repairs what it can tell apart: a backslash that starts no JSON escape (`\|`, `\.`, `\d`, `C:\users`) is kept as a backslash, a `\b` in a tool call's input stays the two characters the model meant rather than a backspace, and so does a `\f` in a command, where Claude Code would refuse a form feed (a file's real form feeds are kept). A tool call that is still not JSON, typically for an unescaped quote, is not passed on as text, which would end the turn with raw JSON on screen: the same session is asked once to write it again, and if that fails too, Claude Code retries the request. A tool call cut off by the output limit is passed on as text, since writing it again would hit the same limit.
 
+`agy` reads its own slash commands (`/compact`, `/plan`, `/goal`, and the user's own commands and skills it advertises) anywhere in a prompt where a space comes before the slash, not only at the start: a tool result quoting `Run /compact` was taken as a `/compact` the user typed, and the model answered that it could not run it. `agy acp` has no switch to turn this off (`--disable-slash-commands` is for print mode only), so NeoSwitch writes each command name in a form `agy` does not read as a command and the model reads unchanged: in JSON (tool calls, tool results, tool definitions) the slash becomes the escape `\/`, and in plain text an invisible word joiner (U+2060) goes before it.
+
 When Google refuses a request, Claude Code shows the reason in `agy`'s own words:
 
 | Reason | What Claude Code does |
