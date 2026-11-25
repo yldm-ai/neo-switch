@@ -1,9 +1,9 @@
 ---
-description: Show whether this project uses Claude or Gemini 4 Neon, and what to do next
+description: Show whether this session uses Claude or Gemini 4 Neon, Google sign-in status, and quota usage when active
 disable-model-invocation: true
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh *)
 ---
 
 !`${CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh status "${CLAUDE_PROJECT_DIR}"`
 
-Tell the user the result above in their language, briefly. Do not run any other command.
+Tell the user the result above in their language, briefly. Keep any quota usage lines, percentages, reset times, and progress bars verbatim. Do not run any other command.

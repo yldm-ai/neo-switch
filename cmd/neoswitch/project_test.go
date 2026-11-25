@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	}
 	if os.Getenv(fakeAgyEnv) != "" && len(os.Args) > 1 {
 		switch {
-		case os.Args[1] == "acp":
+		case os.Args[1] == "acp" || os.Args[1] == "-p":
 			runFakeAgy()
 			os.Exit(0)
 		case os.Args[1] == "antigravity":

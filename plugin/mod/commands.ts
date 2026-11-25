@@ -83,7 +83,10 @@ export const register: Register = on => {
       try {
         const env = await commandEnv($)
         started = true
-        const shown = answer(await run($, env, [command, env.CLAUDE_PROJECT_DIR ?? '']), `/neoswitch:${command}`)
+        const cliArgs = command === 'status' && e.args.trim() === '-v'
+          ? [command, '-v', env.CLAUDE_PROJECT_DIR ?? '']
+          : [command, env.CLAUDE_PROJECT_DIR ?? '']
+        const shown = answer(await run($, env, cliArgs), `/neoswitch:${command}`)
         void refreshLabel($)
         return shown
       } catch (err) {
