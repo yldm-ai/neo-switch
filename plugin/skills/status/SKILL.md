@@ -1,5 +1,5 @@
 ---
-description: Show whether this session uses Claude or Gemini 4 Neon, Google sign-in status, and quota usage when active
+description: Show whether this session uses Claude or Gemini 4 Neon, Google sign-in status, and quota usage
 disable-model-invocation: true
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/plugin/neoswitch.sh *)
 ---
