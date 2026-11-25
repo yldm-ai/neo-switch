@@ -377,7 +377,7 @@ func status(args []string) error {
 	return printStatus(os.Stdout, project, *verbose)
 }
 
-// printStatus answers in two or three plain lines whether this project and this session use NeoSwitch, whether it can work, and the one command to run next. Addresses, the backend choice and the daemon state follow only when verbose.
+// printStatus answers whether this session uses NeoSwitch, whether Google (Antigravity) is signed in, quota usage when signed in and active, and the one command to run next. Addresses, the backend choice, all quota groups, credits and the daemon state follow when verbose.
 func printStatus(w io.Writer, project string, verbose bool) error {
 	dir, err := daemon.Dir()
 	if err != nil {
@@ -396,13 +396,20 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 	// The daemon routes by session, so it is the one that knows whether this session uses Gemini; its env only tells whether its requests pass through NeoSwitch at all.
 	through := ok && os.Getenv("ANTHROPIC_BASE_URL") == state.BaseURL() && !gatewayModeOn()
 	// configuredBackend checks credentials and agy locally without calling the model, so a missing sign-in is reported instead of a route that cannot work.
-	_, model, label, backendErr := configuredBackend(context.Background())
+	backend, model, label, backendErr := configuredBackend(context.Background())
 	var info daemon.Info
 	running := false
 	if ok {
 		info, running = daemon.StatusOf(state, currentSession().id)
 	}
 	session := info.OptedIn && !gatewayModeOn()
+	activeAgy := session && (info.Backend == "" || info.Backend == label)
+	var agyStatus antigravityStatus
+	if backendErr == nil && (session || !(through && !running)) {
+		if agy, isAgy := backend.(*provider.AntigravityACP); isAgy {
+			agyStatus = checkAntigravityStatus(agy, activeAgy, activeAgy && verbose)
+		}
+	}
 	switch {
 	case !session && through && !running:
 		fmt.Fprintln(w, "This session's requests go through NeoSwitch, which is not running, so it cannot answer.")
@@ -410,6 +417,20 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 	case !session && backendErr != nil:
 		fmt.Fprintln(w, "This session uses Claude.")
 		fmt.Fprintln(w, sentence(backendErr.Error()))
+	case !session && agyStatus.checked && agyStatus.signInErr != nil:
+		fmt.Fprintln(w, "This session uses Claude.")
+		fmt.Fprintf(w, "Could not check Google (Antigravity) sign-in (%s). Run /neoswitch:login to repair it.\n", agyStatus.signInErr)
+	case !session && agyStatus.checked && !agyStatus.signedIn:
+		fmt.Fprintln(w, "This session uses Claude.")
+		fmt.Fprintln(w, "Not signed in to Google (Antigravity). Run /neoswitch:login to sign in.")
+	case !session && agyStatus.checked && len(agyStatus.models) > 0 && !slices.Contains(agyStatus.models, model):
+		fmt.Fprintln(w, "This session uses Claude.")
+		fmt.Fprintln(w, "Signed in to Google (Antigravity), not active in this session.")
+		fmt.Fprintln(w, provider.ModelNotOfferedMessage(model, agyStatus.models))
+	case !session && agyStatus.checked:
+		fmt.Fprintln(w, "This session uses Claude.")
+		fmt.Fprintln(w, "Signed in to Google (Antigravity), not active in this session.")
+		fmt.Fprintf(w, "Run /neoswitch:on to answer with %s from this session's next message.\n", modelName(model))
 	case !session:
 		fmt.Fprintln(w, "This session uses Claude.")
 		fmt.Fprintf(w, "Run /neoswitch:on to answer with %s from this session's next message.\n", modelName(model))
@@ -417,8 +438,22 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 		fmt.Fprintln(w, "This session is switched to NeoSwitch, but NeoSwitch cannot reach a model.")
 		fmt.Fprintln(w, sentence(backendErr.Error()))
 		fmt.Fprintln(w, "Until then, run /neoswitch:off to continue on Claude in this session.")
+	case activeAgy && agyStatus.checked && agyStatus.signInErr == nil && !agyStatus.signedIn:
+		fmt.Fprintln(w, "This session is switched to NeoSwitch, but you are not signed in to Google (Antigravity).")
+		fmt.Fprintln(w, "Run /neoswitch:login to sign in, or /neoswitch:off to continue on Claude in this session.")
 	default:
 		fmt.Fprintf(w, "This session uses %s through %s, and NeoSwitch is running.\n", modelName(model), plainLabel(label))
+		if activeAgy && agyStatus.checked && agyStatus.signInErr != nil {
+			fmt.Fprintf(w, "Could not check Google (Antigravity) sign-in or usage (%s).\n", agyStatus.signInErr)
+		} else if agyStatus.usage != nil {
+			activeModel := model
+			if info.Model != "" {
+				activeModel = info.Model
+			}
+			if writeUsageReport(w, agyStatus.usage, activeModel, verbose, time.Now()) {
+				fmt.Fprintln(w)
+			}
+		}
 		switch {
 		case info.Backend != "" && info.Backend != label:
 			fmt.Fprintf(w, "Other Claude Code windows still share the earlier setup (%s), so this session uses it too. %s\n", plainLabel(info.Backend), moveWindowsHint(info, modelName(model)+" through "+plainLabel(label)))
@@ -451,6 +486,24 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 		fmt.Fprintf(w, "backend:  %s (%s), not usable: %v\n", kind, reason, backendErr)
 	} else {
 		fmt.Fprintf(w, "backend:  %s (%s), %s, model %s\n", kind, reason, label, model)
+	}
+	if agyStatus.checked {
+		switch {
+		case agyStatus.signInErr != nil:
+			fmt.Fprintf(w, "sign-in:  unknown (%v)\n", agyStatus.signInErr)
+		case agyStatus.signedIn:
+			fmt.Fprintln(w, "sign-in:  signed in")
+		default:
+			fmt.Fprintln(w, "sign-in:  not signed in")
+		}
+		if agyStatus.usageErr != nil {
+			fmt.Fprintf(w, "usage:    unavailable (%v)\n", agyStatus.usageErr)
+		}
+		if agyStatus.hasCredits {
+			fmt.Fprintf(w, "credits:  %g\n", agyStatus.credits)
+		} else if agyStatus.creditsErr != nil {
+			fmt.Fprintf(w, "credits:  unavailable (%v)\n", agyStatus.creditsErr)
+		}
 	}
 	if running {
 		fmt.Fprintf(w, "daemon:   running %s on %s, %d Claude Code session(s) attached\n", versionOrUnknown(info.Version), info.Backend, info.Sessions)

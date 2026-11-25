@@ -30,6 +30,10 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if mode := os.Getenv(fakeACPEnv); mode != "" {
+		if len(os.Args) > 1 && os.Args[1] == "-p" {
+			runFakePrintCommand(mode)
+			os.Exit(0)
+		}
 		if slices.Contains(os.Args, "--login") {
 			runFakeTerminalSignIn(mode)
 		}

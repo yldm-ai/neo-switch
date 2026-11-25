@@ -26,6 +26,31 @@ const fakeCode = "4/0Afake-code_1"
 
 func runFakeAgy() {
 	signedIn := os.Getenv("FAKE_SIGNED_IN")
+	if len(os.Args) > 2 && os.Args[1] == "-p" {
+		if marker := os.Getenv("FAKE_USAGE_CALLED"); marker != "" {
+			_ = os.WriteFile(marker, []byte(os.Args[2]+"\n"), 0o600)
+		}
+		switch os.Args[2] {
+		case "/usage":
+			switch raw := os.Getenv("FAKE_USAGE"); raw {
+			case "":
+				os.Exit(1)
+			case "error":
+				fmt.Print(`{"status":"ERROR","error":"usage unavailable","num_turns":0}`)
+				os.Exit(2)
+			default:
+				fmt.Print(raw)
+				os.Exit(0)
+			}
+		case "/credits":
+			if raw := os.Getenv("FAKE_CREDITS"); raw != "" {
+				fmt.Print(raw)
+				os.Exit(0)
+			}
+			os.Exit(1)
+		}
+		os.Exit(1)
+	}
 	if slices.Contains(os.Args, "--login") {
 		fmt.Print("Open this link in a browser to log in with Google:\n\n  https://accounts.google.com/o/oauth2/auth?state=" + os.Getenv("FAKE_LINK_STATE") + "\n\nThen paste the authorization code: ")
 		code, _ := bufio.NewReader(os.Stdin).ReadString('\n')

@@ -67,7 +67,7 @@ neoswitch models                # list the models the credentials can use, marki
 neoswitch backend [choice]      # show or choose the backend: auto, antigravity, gemini or openai
 neoswitch on [project]          # inside a Claude Code session: switch that session to Gemini
 neoswitch off [project]         # inside a Claude Code session: switch it back to Claude
-neoswitch status [-v] [project] # show whether a project uses NeoSwitch and what to do next (-v adds details)
+neoswitch status [-v] [project] # show whether this session uses NeoSwitch, Google sign-in and quota usage when active (-v adds all quota groups, credits and details)
 neoswitch version               # print the NeoSwitch version
 ```
 
