@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,7 +51,12 @@ func (r Route) Headers(s State) string {
 
 // Enable points Claude Code sessions in project at the shared proxy by adding its env entries to settings.local.json. Every other key in the file is preserved, and entries an earlier NeoSwitch wrote are replaced.
 func Enable(project string, s State, r Route) error {
-	return editSettings(project, true, func(env map[string]any) {
+	var saveErr error
+	err := editSettings(project, true, func(env map[string]any) {
+		// The user's own values go to the state folder before they are replaced, or are not replaced at all.
+		if saveErr = saveReplaced(project, s, env); saveErr != nil {
+			return
+		}
 		removeLegacy(env, s)
 		clearGatewayOverride(env, s)
 		env[envBaseURL] = s.BaseURL()
@@ -59,6 +66,64 @@ func Enable(project string, s State, r Route) error {
 			env[envHintHeaders] = hintHeadersOn
 		}
 	})
+	if saveErr != nil {
+		return fmt.Errorf("NeoSwitch could not keep a copy of this project's own %s settings, so it left the project as it was: %w", strings.Join(replaceable, " and "), saveErr)
+	}
+	return err
+}
+
+// replaceable are the entries Enable writes over that a user may have set in the project's settings: a CA file of their own (a company proxy's, for one), whose certificates the bundle includes, and headers of their own, which the token header joins. Disable puts the user's values back, so turning NeoSwitch off leaves the file as the user had it.
+var replaceable = []string{envHeaders, envExtraCAs}
+
+// replacedPath is where the user's values of replaceable entries in project are kept while NeoSwitch routes it.
+func replacedPath(project string, s State) string {
+	sum := sha256.Sum256([]byte(project))
+	return filepath.Join(s.dir, "replaced", hex.EncodeToString(sum[:8])+".json")
+}
+
+// ownValue reports whether value of a replaceable entry is NeoSwitch's own.
+func ownValue(key, value string, s State) bool {
+	switch key {
+	case envHeaders:
+		return strings.Contains(value, TokenHeader+":")
+	case envExtraCAs:
+		return value == BundlePath(s.dir)
+	}
+	return false
+}
+
+// saveReplaced keeps the user's values of replaceable entries in env, when it has any; a later Enable finds NeoSwitch's values there and keeps the copy it has.
+func saveReplaced(project string, s State, env map[string]any) error {
+	if s.dir == "" {
+		return nil
+	}
+	saved := map[string]string{}
+	for _, key := range replaceable {
+		if value, _ := env[key].(string); value != "" && !ownValue(key, value, s) {
+			saved[key] = value
+		}
+	}
+	if len(saved) == 0 {
+		return nil
+	}
+	path := replacedPath(project, s)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, _ := json.Marshal(saved)
+	return WriteFileAtomic(path, data, 0o600)
+}
+
+// loadReplaced returns the user's values Enable kept for project, if any.
+func loadReplaced(project string, s State) map[string]string {
+	saved := map[string]string{}
+	if s.dir == "" {
+		return saved
+	}
+	if data, err := os.ReadFile(replacedPath(project, s)); err == nil {
+		_ = json.Unmarshal(data, &saved)
+	}
+	return saved
 }
 
 // ClearGatewayOverride removes the gateway mode override that versions up to 0.4.1 wrote with their proxy entries, and reports whether the project had one. A running session keeps env it already applied, so this fixes the sessions that start afterwards.
@@ -81,17 +146,28 @@ func clearGatewayOverride(env map[string]any, s State) bool {
 
 // Disable removes the env entries Enable wrote, and those of NeoSwitch versions from before TLS. Entries the user changed to point elsewhere are left alone.
 func Disable(project string, s State) error {
-	return editSettings(project, false, func(env map[string]any) {
+	saved := loadReplaced(project, s)
+	restored := false
+	// restore puts back the user's own value of key, or removes NeoSwitch's.
+	restore := func(env map[string]any, key string) {
+		if value, ok := saved[key]; ok {
+			env[key] = value
+			return
+		}
+		delete(env, key)
+	}
+	err := editSettings(project, false, func(env map[string]any) {
 		removeLegacy(env, s)
 		if env[envBaseURL] != s.BaseURL() {
 			return
 		}
+		restored = true
 		delete(env, envBaseURL)
 		if headers, _ := env[envHeaders].(string); strings.Contains(headers, TokenHeader+": "+s.Token) {
-			delete(env, envHeaders)
+			restore(env, envHeaders)
 		}
 		if cas, _ := env[envExtraCAs].(string); s.dir != "" && cas == BundlePath(s.dir) {
-			delete(env, envExtraCAs)
+			restore(env, envExtraCAs)
 		}
 		if env[EnvUseGateway] == gatewayOff {
 			delete(env, EnvUseGateway)
@@ -101,6 +177,10 @@ func Disable(project string, s State) error {
 			delete(env, envHintHeaders)
 		}
 	})
+	if err == nil && restored && s.dir != "" {
+		_ = os.Remove(replacedPath(project, s))
+	}
+	return err
 }
 
 // removeLegacy removes the entries of a NeoSwitch from before TLS: a plain-HTTP loopback address with this state's token.

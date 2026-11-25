@@ -59,7 +59,9 @@ El comando también muestra un enlace, para cuando no puedes usar el navegador q
 | El aviso dice que otras ventanas de Claude Code siguen compartiendo la configuración anterior | Ejecuta `/neoswitch:on` en esta sesión: todas las ventanas abiertas pasan a su configuración. En Windows, cierra todas las ventanas de Claude Code, vuelve a abrir Claude Code y ejecuta `/neoswitch:on`. |
 | Un aviso dice que los conectores de claude.ai están desactivados porque hay otra fuente de autenticación | NeoSwitch ya no lo causa; lo causaba una versión anterior. Actualiza el plugin (ver abajo). Si sigue apareciendo, otra herramienta define `ANTHROPIC_AUTH_TOKEN` o `ANTHROPIC_API_KEY` para Claude Code. |
 | El aviso dice que otro programa está usando el puerto que necesita NeoSwitch | Cierra ese programa y vuelve a iniciar Claude Code, o ejecuta `/neoswitch:off`. |
-| El aviso dice que NeoSwitch no pudo descargar su programa | Comprueba tu conexión a internet y vuelve a iniciar Claude Code. |
+| El aviso dice que NeoSwitch no pudo descargar su programa | Comprueba tu conexión a internet y vuelve a iniciar Claude Code. Si NeoSwitch ya se ejecutó en este equipo, sigue usando esa versión anterior hasta que la descarga funcione. |
+| El propio `/neoswitch:off` dice que NeoSwitch no pudo ejecutarse | Indica las entradas que hay que borrar del `.claude/settings.local.json` del proyecto; bórralas y abre una sesión nueva. El paso 1 de [quitar NeoSwitch](#desactivar-actualizar-o-quitar) indica las mismas entradas. |
+| Claude Code no se conecta en un proyecto después de quitar NeoSwitch | El proyecto sigue apuntando a NeoSwitch. Borra sus entradas de `.claude/settings.local.json`, como indica el paso 1 de [quitar NeoSwitch](#desactivar-actualizar-o-quitar), y abre una sesión nueva. |
 | `/neoswitch:login` aparece como comando desconocido | Actualiza el plugin (ver abajo), reinicia Claude Code y ejecuta `/reload-plugins`. |
 | Un mensaje dice que el plan de Antigravity de tu cuenta de Google no ofrece gemini-4-neon | Tu plan no incluye Gemini 4 Neon, así que NeoSwitch no puede responder con él y deja el proyecto en Claude. Ejecuta `/neoswitch:login` otra vez para iniciar sesión con una cuenta cuyo plan lo incluya, o ejecuta `/neoswitch:off` e inicia una sesión nueva para volver a Claude. |
 
@@ -78,7 +80,7 @@ Si añadiste el marketplace con su nombre antiguo `yldm-ai/NeoSwitch` / `yldm-ai
 
 Para quitar NeoSwitch:
 
-1. Ejecuta primero `/neoswitch:off` en cada proyecto que activaste. Un proyecto que quede activado sigue apuntando a NeoSwitch y deja de responder cuando NeoSwitch ya no está. Si ya quitaste el plugin, abre `.claude/settings.local.json` en cada uno de esos proyectos y borra `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`, `CLAUDE_CODE_USE_GATEWAY` y, de versiones anteriores, `ANTHROPIC_AUTH_TOKEN` de su objeto `env`.
+1. Ejecuta primero `/neoswitch:off` en cada proyecto que activaste. Un proyecto que quede activado sigue apuntando a NeoSwitch y deja de responder cuando NeoSwitch ya no está. Si ya quitaste el plugin, abre `.claude/settings.local.json` en cada uno de esos proyectos y cambia su objeto `env`: borra `ANTHROPIC_BASE_URL` cuando empiece por `https://127.0.0.1:` (en versiones anteriores `http://127.0.0.1:`, junto con el `ANTHROPIC_AUTH_TOKEN` de al lado); borra la línea `X-NeoSwitch-Token` de `ANTHROPIC_CUSTOM_HEADERS`, y toda la entrada si no queda nada más; borra `NODE_EXTRA_CA_CERTS` cuando nombre `tls/bundle.pem` en la carpeta de NeoSwitch, o vuelve a poner tu propio archivo de CA si tenías uno; y borra `CLAUDE_CODE_GATEWAY_HINT_HEADERS` con valor `1` y `CLAUDE_CODE_USE_GATEWAY` con valor `0`, salvo que los pusieras tú.
 2. Cierra las ventanas de Claude Code que usan NeoSwitch y ejecuta esto en una terminal:
 
 ```bash
@@ -99,7 +101,7 @@ El inicio de sesión de Google lo guarda `agy`, no NeoSwitch, y se queda donde e
 
 Mientras una sesión de un proyecto usa Gemini 4 Neon, NeoSwitch añade tres entradas al objeto `env` del `.claude/settings.local.json` de ese proyecto, y las quita cuando ninguna sesión de allí lo usa:
 
-- `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` y `NODE_EXTRA_CA_CERTS` envían las solicitudes de Claude Code del proyecto a NeoSwitch en este ordenador, por una conexión cifrada que solo NeoSwitch puede responder. NeoSwitch responde con Gemini 4 Neon a las sesiones que cambiaste y pasa cualquier otra solicitud a Claude sin cambios, con tu propio inicio de sesión de Claude, que no guarda ni registra. El encabezado lleva una clave que solo abre NeoSwitch en este ordenador.
+- `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` y `NODE_EXTRA_CA_CERTS` envían las solicitudes de Claude Code del proyecto a NeoSwitch en este ordenador, por una conexión cifrada que solo NeoSwitch puede responder. NeoSwitch responde con Gemini 4 Neon a las sesiones que cambiaste y pasa cualquier otra solicitud a Claude sin cambios, con tu propio inicio de sesión de Claude, que no guarda ni registra. El encabezado lleva una clave que solo abre NeoSwitch en este ordenador. Si el archivo tenía un `NODE_EXTRA_CA_CERTS` o un `ANTHROPIC_CUSTOM_HEADERS` tuyo, NeoSwitch guarda una copia y vuelve a poner tu valor cuando quita sus entradas.
 
 En un proyecto Git, NeoSwitch también añade `.claude/settings.local.json` a la lista de exclusión propia del clon (`.git/info/exclude`), para que el token no entre en los commits; tu `.gitignore` no se toca.
 

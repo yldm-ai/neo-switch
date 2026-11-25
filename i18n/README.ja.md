@@ -59,7 +59,9 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 | ほかの Claude Code ウィンドウが以前の設定を共有していると出る | このセッションで `/neoswitch:on` を実行すると、開いているウィンドウがすべてこのセッションの設定に切り替わります。Windows では Claude Code のウィンドウをすべて閉じてもう一度開き、`/neoswitch:on` を実行します。 |
 | 別の認証ソースが設定されているため claude.ai connectors が無効と警告が出る | 現在の NeoSwitch はこの警告の原因になりません。以前のバージョンが原因でした。プラグインを更新してください（下記参照）。それでも出る場合は、別のツールが Claude Code に `ANTHROPIC_AUTH_TOKEN` または `ANTHROPIC_API_KEY` を設定しています。 |
 | NeoSwitch が必要とするポートを別のプログラムが使っていると出る | そのプログラムを閉じて Claude Code を起動し直すか、`/neoswitch:off` を実行します。 |
-| NeoSwitch がプログラムをダウンロードできなかったと出る | インターネット接続を確認し、Claude Code を起動し直します。 |
+| NeoSwitch がプログラムをダウンロードできなかったと出る | インターネット接続を確認し、Claude Code を起動し直します。このコンピューターで以前 NeoSwitch が動いていた場合は、ダウンロードできるまでその以前のバージョンを使い続けます。 |
+| `/neoswitch:off` 自体が NeoSwitch を実行できなかったと出る | プロジェクトの `.claude/settings.local.json` から削除する項目が表示されます。それを削除して新しいセッションを始めます。[NeoSwitch の削除](#オフ更新削除)の手順 1 にも同じ項目があります。 |
+| NeoSwitch を削除した後、プロジェクトで Claude Code が接続できない | そのプロジェクトはまだ NeoSwitch を向いています。[NeoSwitch の削除](#オフ更新削除)の手順 1 のとおり `.claude/settings.local.json` からその項目を削除し、新しいセッションを始めます。 |
 | `/neoswitch:login` が不明なコマンドになる | プラグインを更新し（下記参照）、Claude Code を再起動してから `/reload-plugins` を実行します。 |
 | Google アカウントの Antigravity プランに gemini-4-neon がないと出る | プランに Gemini 4 Neon が含まれていないため、NeoSwitch はそれで回答できず、プロジェクトは Claude のままです。`/neoswitch:login` をもう一度実行して、プランに含まれるアカウントでサインインするか、`/neoswitch:off` を実行して新しいセッションを始め、Claude に戻ってください。 |
 
@@ -78,7 +80,7 @@ claude plugin update neoswitch@neoswitch
 
 NeoSwitch を削除するには:
 
-1. 切り替えた各プロジェクトで、先に `/neoswitch:off` を実行します。オンのまま残したプロジェクトは NeoSwitch を向いたままになり、NeoSwitch を削除すると回答できなくなります。プラグインをすでに削除した場合は、該当する各プロジェクトの `.claude/settings.local.json` を開き、`env` オブジェクトから `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`NODE_EXTRA_CA_CERTS`、`CLAUDE_CODE_USE_GATEWAY`、以前のバージョンの `ANTHROPIC_AUTH_TOKEN` を削除してください。
+1. 切り替えた各プロジェクトで、先に `/neoswitch:off` を実行します。オンのまま残したプロジェクトは NeoSwitch を向いたままになり、NeoSwitch を削除すると回答できなくなります。プラグインをすでに削除した場合は、該当する各プロジェクトの `.claude/settings.local.json` を開き、`env` オブジェクトを次のように直してください: `https://127.0.0.1:` で始まる `ANTHROPIC_BASE_URL` を削除します（以前のバージョンでは `http://127.0.0.1:` で、隣の `ANTHROPIC_AUTH_TOKEN` も一緒に削除します）。`ANTHROPIC_CUSTOM_HEADERS` の `X-NeoSwitch-Token` の行を削除し、ほかに何も残らなければ項目ごと削除します。NeoSwitch のフォルダーの `tls/bundle.pem` を指す `NODE_EXTRA_CA_CERTS` を削除し、自分の CA ファイルを設定していた場合はそのパスに戻します。自分で設定したのでなければ、値が `1` の `CLAUDE_CODE_GATEWAY_HINT_HEADERS` と値が `0` の `CLAUDE_CODE_USE_GATEWAY` も削除します。
 2. NeoSwitch を使っている Claude Code ウィンドウを閉じ、ターミナルで次を実行します。
 
 ```bash
@@ -99,7 +101,7 @@ Google のログイン情報は NeoSwitch ではなく `agy` が保存してお�
 
 あるプロジェクトのセッションが Gemini 4 Neon を使っている間、NeoSwitch はそのプロジェクトの `.claude/settings.local.json` の `env` オブジェクトに 3 つの項目を追加し、そこで使うセッションがなくなると取り除きます。
 
-- `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`NODE_EXTRA_CA_CERTS`: そのプロジェクトの Claude Code のリクエストを、NeoSwitch だけが応答できる暗号化された接続で、このコンピューター上の NeoSwitch に送ります。切り替えたセッションには Gemini 4 Neon が答え、それ以外のリクエストはご自身の Claude のログインのまま Claude にそのまま渡します。NeoSwitch はそのログインを保存も記録もしません。ヘッダーのキーはこのコンピューターの NeoSwitch にしか使えません。
+- `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`NODE_EXTRA_CA_CERTS`: そのプロジェクトの Claude Code のリクエストを、NeoSwitch だけが応答できる暗号化された接続で、このコンピューター上の NeoSwitch に送ります。切り替えたセッションには Gemini 4 Neon が答え、それ以外のリクエストはご自身の Claude のログインのまま Claude にそのまま渡します。NeoSwitch はそのログインを保存も記録もしません。ヘッダーのキーはこのコンピューターの NeoSwitch にしか使えません。ファイルに自分で設定した `NODE_EXTRA_CA_CERTS` や `ANTHROPIC_CUSTOM_HEADERS` があった場合、NeoSwitch はその写しを残し、自分の項目を削除するときに元の値に戻します。
 
 Git プロジェクトでは、NeoSwitch は `.claude/settings.local.json` をそのクローン専用の除外リスト（`.git/info/exclude`）にも追加し、トークンがコミットに入らないようにします。`.gitignore` は変更しません。
 

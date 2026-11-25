@@ -188,3 +188,29 @@ func TestAttachOfANewerReleaseTakesOverTheRunningDaemon(t *testing.T) {
 		t.Fatal("the takeover turned the project back to Claude")
 	}
 }
+
+// When NeoSwitch cannot start, the session start message sends the user to /neoswitch:off, so /neoswitch:off must take NeoSwitch out of the project without a running daemon: the next session then reaches Claude directly instead of failing the same way.
+func TestOffWithoutADaemonTakesNeoSwitchOutOfTheProject(t *testing.T) {
+	isolateBackendEnv(t, true)
+	inSession(t)
+	project := t.TempDir()
+	dir, err := daemon.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := daemon.EnsureState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.Enable(projectKey(project), state, daemon.Route{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_BASE_URL", state.BaseURL())
+	out := stdoutOf(t, func() error { return off([]string{project}) })
+	if enabled, err := daemon.Enabled(projectKey(project), state); err != nil || enabled {
+		t.Fatalf("the project still points at NeoSwitch (enabled=%v, err=%v)", enabled, err)
+	}
+	if !strings.Contains(out, "Start a new Claude Code session") {
+		t.Fatalf("off said %q", out)
+	}
+}
