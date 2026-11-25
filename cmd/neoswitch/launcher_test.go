@@ -35,7 +35,15 @@ func launcher(t *testing.T, brokenGo bool) func(cache string, args ...string) (s
 	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte("9.9.9\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The PATH holds only the tools the scripts use, so a Go installed on the machine, such as /usr/bin/go on CI runners, is not found.
 	fakeBin := t.TempDir()
+	for _, tool := range []string{"sh", "cat", "sed", "tr", "cksum", "cut", "find", "uname", "mktemp", "rm", "mkdir", "mv", "basename", "dirname", "awk", "chmod", "head", "tail", "date", "grep", "sha256sum", "shasum"} {
+		if path, err := exec.LookPath(tool); err == nil {
+			if err := os.Symlink(path, filepath.Join(fakeBin, tool)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if err := os.WriteFile(filepath.Join(fakeBin, "curl"), []byte("#!/bin/sh\nexit 22\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +62,7 @@ func launcher(t *testing.T, brokenGo bool) func(cache string, args ...string) (s
 		cmd := exec.Command(filepath.Join(root, "plugin", script), args...)
 		// The hook reads a routed session's input from stdin; NeoSwitch's address in the env makes it routed.
 		cmd.Stdin = strings.NewReader(`{"session_id":"s1","source":"startup"}`)
-		cmd.Env = []string{"PATH=" + fakeBin + ":/usr/bin:/bin", "HOME=" + t.TempDir(), "XDG_CACHE_HOME=" + cache, "NEOSWITCH_STATE_DIR=" + state, "ANTHROPIC_BASE_URL=https://127.0.0.1:1"}
+		cmd.Env = []string{"PATH=" + fakeBin, "HOME=" + t.TempDir(), "XDG_CACHE_HOME=" + cache, "NEOSWITCH_STATE_DIR=" + state, "ANTHROPIC_BASE_URL=https://127.0.0.1:1"}
 		var out, errOut strings.Builder
 		cmd.Stdout, cmd.Stderr = &out, &errOut
 		err := cmd.Run()
