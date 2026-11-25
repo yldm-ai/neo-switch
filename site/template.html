@@ -163,6 +163,11 @@
   .ok { color: var(--accent); }
   .part { color: var(--warn); }
   .no { color: #ff8f8f; }
+  .cmp { min-width: 720px; }
+  .cmp th .th-sub { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .cmp th.ns { color: var(--accent); background: rgba(124, 242, 200, .07); }
+  .cmp td.ns { background: rgba(124, 242, 200, .04); color: var(--text); }
+  .cmp td.other { color: var(--muted); }
 
   .warn { margin-top: 24px; border: 1px solid rgba(245, 194, 107, .4); background: rgba(245, 194, 107, .07); border-radius: 12px; padding: 16px 20px; font-size: 14px; color: #e9dcc4; }
   .warn strong { color: var(--warn); }
@@ -231,6 +236,7 @@
     <div class="nav-right">
       <ul>
         <li><a href="#how">{{index .T "nav_how"}}</a></li>
+        <li><a href="#compare">{{index .T "nav_compare"}}</a></li>
         <li><a href="#start">{{index .T "nav_start"}}</a></li>
         <li><a href="#compat">{{index .T "nav_compat"}}</a></li>
         <li><a href="https://github.com/yldm-ai/neo-switch">GitHub</a></li>
@@ -323,6 +329,32 @@
         <h3>{{index .T "why_honest_title"}}</h3>
         <p>{{index .T "why_honest_desc"}}</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="wrap">
+    <h2 class="reveal">{{index .T "cmp_title"}}</h2>
+    <p class="sub reveal">{{index .T "cmp_sub"}}</p>
+    <div class="table-wrap reveal">
+      <table class="cmp">
+        <thead>
+          <tr>
+            <th></th>
+            <th class="ns">NeoSwitch</th>
+            <th>{{index .T "cmp_th_managers"}}<span class="th-sub">{{index .T "cmp_th_managers_ex"}}</span></th>
+            <th>{{index .T "cmp_th_proxies"}}<span class="th-sub">{{index .T "cmp_th_proxies_ex"}}</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>{{index .T "cmp_row_setup"}}</td><td class="ns">{{index .T "cmp_setup_ns"}}</td><td class="other">{{index .T "cmp_setup_mgr"}}</td><td class="other">{{index .T "cmp_setup_prx"}}</td></tr>
+          <tr><td>{{index .T "cmp_row_scope"}}</td><td class="ns">{{index .T "cmp_scope_ns"}}</td><td class="other">{{index .T "cmp_scope_mgr"}}</td><td class="other">{{index .T "cmp_scope_prx"}}</td></tr>
+          <tr><td>{{index .T "cmp_row_features"}}</td><td class="ns">{{index .T "cmp_features_ns"}}</td><td class="other">{{index .T "cmp_features_mgr"}}</td><td class="other">{{index .T "cmp_features_prx"}}</td></tr>
+          <tr><td>{{index .T "cmp_row_signin"}}</td><td class="ns">{{index .T "cmp_signin_ns"}}</td><td class="other">{{index .T "cmp_signin_mgr"}}</td><td class="other">{{index .T "cmp_signin_prx"}}</td></tr>
+          <tr><td>{{index .T "cmp_row_best"}}</td><td class="ns">{{index .T "cmp_best_ns"}}</td><td class="other">{{index .T "cmp_best_mgr"}}</td><td class="other">{{index .T "cmp_best_prx"}}</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </section>

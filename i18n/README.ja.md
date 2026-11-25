@@ -10,6 +10,16 @@ NeoSwitch を使うと、Claude Code はそのままに、Claude の代わりに
 
 切り替えはプロジェクトごとで、ほかのプロジェクトは Claude のまま使えます。プラグインは macOS と Linux で動作します。Windows にはまだ対応していません。
 
+## ほかのツールとの違い
+
+| | **NeoSwitch** | **設定管理・ルーター**<br>（例: CC Switch、Claude Code Router） | **独立した Antigravity プロキシ**<br>（例: antigravity-claude-proxy） |
+|---|---|---|---|
+| **構成** | Claude Code ネイティブプラグイン（デスクトップアプリや常駐サーバー管理は不要） | 複数の CLI 設定をまとめて管理する別個のデスクトップアプリ | 独立した Node.js プロキシサーバー + Web UI |
+| **切り替え範囲** | **セッション単位**（`/neoswitch:on`・`/neoswitch:off`）。ほかのウィンドウは Claude のまま | プロバイダーのグローバル切り替え、または共通ローカルルーター | グローバルな `~/.claude/settings.json` やシェル環境変数 |
+| **Claude Code の機能** | **そのまま維持** — `ANTHROPIC_AUTH_TOKEN` を設定しないため、claude.ai コネクタや auto mode の確認もそのまま動作 | 外部設定またはルーター経由で管理 | `ANTHROPIC_AUTH_TOKEN` を設定するため claude.ai コネクタが無効化される |
+| **Google サインイン** | 公式 `agy` 経由で Google アカウントを使用。**OAuth トークンの読み取り・保存・再生は一切せず**、`agy` 自身のツールも遮断 | 主に API キーやサードパーティ中継を利用（`agy` 統合なし） | ローカルの OAuth トークンを保存・読み取りし、非公開エンドポイントを直接呼び出す |
+| **向いている用途** | 普段の Claude Code 環境を保ったまま、必要なセッションだけ Gemini 4 Neon に切り替えたい | 複数の CLI・API キー・中継先・MCP を一か所で管理したい | 複数アカウントのローテーション、Windows 対応、Antigravity 経由での Claude モデル利用 |
+
 ## はじめかた
 
 **1. プラグインをインストールする。** Claude Code で次の 2 行を 1 行ずつ実行します。各行は丸ごとコピーしてください。1 行目は `neo-switch`、2 行目は `neoswitch` です。
