@@ -400,6 +400,16 @@ func runFakeACP(mode string) {
 				p.answer = streamEnvelope
 			case "tool":
 				p.answer = `{"tool_use":{"name":"Read","input":{"file_path":"a.go"}}}`
+			case "tool-malformed", "tool-malformed-once", "text-tool-malformed-once":
+				// A tool call with unescaped quotes; asked to write it again, the -once fakes answer with the session and its prompt count. The text- fake writes text before the call.
+				head := `{`
+				if mode == "text-tool-malformed-once" {
+					head = `{"text":"Running it.",`
+				}
+				p.answer = head + `"tool_use":{"name":"Bash","input":{"command":"echo "hi""}}}`
+				if mode != "tool-malformed" && strings.Contains(text, "was not valid JSON") {
+					p.answer = head + fmt.Sprintf(`"tool_use":{"name":"Bash","input":{"command":"%s %d"}}}`, p.sid, sessionPrompts[p.sid])
+				}
 			case "refusal":
 				p.answer = ""
 			}

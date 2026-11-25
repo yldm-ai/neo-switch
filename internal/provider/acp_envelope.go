@@ -26,7 +26,7 @@ import (
 const acpPromptBudget = 150_000
 
 // acpAnswerInstructions open the prompt the model answers. agy keeps the start of a prompt, so they come first.
-const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Do not use ACP tools, edit files, or run commands yourself.\n\n"
+const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Escape literal backslashes inside JSON strings as \\\\. Do not use ACP tools, edit files, or run commands yourself.\n\n"
 
 // acpPiece is prompt text with the images that belong to it.
 type acpPiece struct {
@@ -218,6 +218,16 @@ func (p *promptBuilder) attach(mimeType string, data []byte) {
 
 var errEmptyACPAnswer = errors.New("Antigravity ACP returned an empty response")
 
+// malformedToolUseError is an answer that starts a {"tool_use": ...} envelope but is not JSON even after repairJSONStrings, typically for an unescaped quote or a cut-off answer. Passing it on as text would end Claude Code's turn with the raw JSON on screen and no tool run, so the session is asked once to write it again (acpToolUseRepair).
+type malformedToolUseError struct{ cause error }
+
+func (e *malformedToolUseError) Error() string {
+	return "Antigravity answered with a tool call that is not valid JSON: " + e.cause.Error()
+}
+
+// toolUseStart matches the start of an envelope with a tool call once the code fence is stripped: "tool_use" first, or after the "text" the prompt allows with it.
+var toolUseStart = regexp.MustCompile(`^\s*\{\s*(?:"text"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*)?"tool_use"\s*:`)
+
 // acpEnvelope is the JSON object the prompt asks for.
 type acpEnvelope struct {
 	Text    string `json:"text"`
@@ -233,10 +243,14 @@ func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 		return nil, false, errEmptyACPAnswer
 	}
 	clean := stripCodeFence(raw)
-	envelopes, complete := decodeEnvelopes(clean)
+	envelopes, complete, _ := decodeEnvelopes(clean)
 	if len(envelopes) == 0 {
-		// Models sometimes put literal newlines or tabs inside JSON strings; accept those before giving up on the envelope.
-		envelopes, complete = decodeEnvelopes(escapeControlInStrings(clean))
+		// Models write literal newlines or tabs inside JSON strings, and backslashes that are no JSON escape (a regular expression's \. or \|, a Windows path); accept those before giving up on the envelope.
+		var err error
+		envelopes, complete, err = decodeEnvelopes(repairJSONStrings(clean))
+		if len(envelopes) == 0 && toolUseStart.MatchString(clean) {
+			return nil, false, &malformedToolUseError{cause: err}
+		}
 	}
 	if len(envelopes) == 0 {
 		acpLogger.Warn("Antigravity answered without the JSON envelope; passing it on as text")
@@ -260,6 +274,7 @@ func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 			if err := json.Unmarshal(envelope.ToolUse.Input, &input); err != nil {
 				return nil, false, fmt.Errorf("decode Antigravity ACP tool call: %w", err)
 			}
+			restoreBackslashLetters(input)
 		}
 		if call == nil {
 			call = &genai.Part{FunctionCall: &genai.FunctionCall{ID: "acp_tool_" + rand.Text(), Name: envelope.ToolUse.Name, Args: input}}
@@ -285,21 +300,47 @@ func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 	return parts, exact, nil
 }
 
-// decodeEnvelopes reads the JSON objects at the start of s, one after another. complete is false when something other than another object follows them.
-func decodeEnvelopes(s string) ([]acpEnvelope, bool) {
+// decodeEnvelopes reads the JSON objects at the start of s, one after another. complete is false when something other than another object follows them; err says what.
+func decodeEnvelopes(s string) ([]acpEnvelope, bool, error) {
 	decoder := json.NewDecoder(strings.NewReader(s))
 	var envelopes []acpEnvelope
 	for {
 		var envelope acpEnvelope
 		err := decoder.Decode(&envelope)
 		if errors.Is(err, io.EOF) {
-			return envelopes, true
+			return envelopes, true, nil
 		}
 		if err != nil {
-			return envelopes, false
+			return envelopes, false, err
 		}
 		envelopes = append(envelopes, envelope)
 	}
+}
+
+// restoreBackslashLetters turns control characters in a tool call's input that a model writes only by escaping too little back into the \b and \f it wrote. JSON reads \b as a backspace, which no tool input means, but a model writes it for a regular expression's word boundary. A form feed is restored only in a command, where Claude Code refuses it as hiding text from the approval dialog: a file can hold real form feeds, which an edit or a write must keep.
+func restoreBackslashLetters(input map[string]any) {
+	for key, value := range input {
+		input[key] = restoreBackspaces(value)
+	}
+	if command, ok := input["command"].(string); ok {
+		input["command"] = strings.ReplaceAll(command, "\f", `\f`)
+	}
+}
+
+func restoreBackspaces(value any) any {
+	switch v := value.(type) {
+	case string:
+		return strings.ReplaceAll(v, "\b", `\b`)
+	case map[string]any:
+		for key, item := range v {
+			v[key] = restoreBackspaces(item)
+		}
+	case []any:
+		for i, item := range v {
+			v[i] = restoreBackspaces(item)
+		}
+	}
+	return value
 }
 
 // sameJSON reports whether two decoded values encode to the same JSON; map keys are encoded in sorted order.
@@ -309,11 +350,15 @@ func sameJSON(a, b any) bool {
 	return errX == nil && errY == nil && string(x) == string(y)
 }
 
-// acpAnswerParts is parseAnswer for a finished prompt: a refusal may legitimately come with no text.
+// acpAnswerParts is parseAnswer for a finished prompt: a refusal may legitimately come with no text, and a tool call cut off by the output limit is passed on as text with that stop reason, since writing it again would run into the same limit.
 func acpAnswerParts(raw string, result acp.PromptResponse) ([]*genai.Part, bool, error) {
 	parts, exact, err := parseAnswer(raw)
 	if errors.Is(err, errEmptyACPAnswer) && result.StopReason == acp.StopReasonRefusal {
 		return nil, false, nil
+	}
+	if malformed := (*malformedToolUseError)(nil); errors.As(err, &malformed) && result.StopReason == acp.StopReasonMaxTokens {
+		acpLogger.Warn("Antigravity reached its output limit inside a tool call; passing it on as text")
+		return []*genai.Part{{Text: raw}}, false, nil
 	}
 	return parts, exact, err
 }
@@ -330,17 +375,21 @@ func stripCodeFence(raw string) string {
 	return clean
 }
 
-// escapeControlInStrings escapes raw control characters that appear inside JSON string literals, leaving whitespace between tokens alone.
-func escapeControlInStrings(s string) string {
+// repairJSONStrings makes the string literals of almost-JSON valid: it escapes raw control characters, and doubles every backslash that does not start a JSON escape, so that it reads as the backslash the model meant (a regular expression's \. or \|, a Windows path's C:\users). Valid escapes, and everything outside string literals, are left alone.
+func repairJSONStrings(s string) string {
 	var out strings.Builder
-	inString, escaped := false, false
+	inString := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
-		case escaped:
-			escaped = false
 		case inString && c == '\\':
-			escaped = true
+			if n := jsonEscapeLength(s[i:]); n > 0 {
+				out.WriteString(s[i : i+n])
+				i += n - 1
+				continue
+			}
+			out.WriteString(`\\`)
+			continue
 		case c == '"':
 			inString = !inString
 		case inString && c < 0x20:
@@ -350,6 +399,31 @@ func escapeControlInStrings(s string) string {
 		out.WriteByte(c)
 	}
 	return out.String()
+}
+
+// jsonEscapeLength returns the length of the JSON escape sequence at the start of s, or 0 when s does not start with one.
+func jsonEscapeLength(s string) int {
+	if len(s) < 2 {
+		return 0
+	}
+	switch s[1] {
+	case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+		return 2
+	case 'u':
+		if len(s) >= 6 && isHex(s[2:6]) {
+			return 6
+		}
+	}
+	return 0
+}
+
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", rune(s[i])) {
+			return false
+		}
+	}
+	return true
 }
 
 func controlEscape(c byte) string {
@@ -503,12 +577,15 @@ scan:
 	return text
 }
 
-// escapeLength returns the length of the escape sequence at the start of s, or 0 when it is not complete yet. A UTF-16 high surrogate is kept with the low surrogate that follows it so the pair decodes to one character.
+// escapeLength returns the length of the escape sequence at the start of s, or 0 when it is not complete yet. A backslash that starts no JSON escape counts as itself and the character after it, which decodeJSONStringBody keeps as written. A UTF-16 high surrogate is kept with the low surrogate that follows it so the pair decodes to one character.
 func escapeLength(s string) int {
 	if len(s) < 2 {
 		return 0
 	}
 	if s[1] != 'u' {
+		return 2
+	}
+	if !isHex(s[2:min(len(s), 6)]) {
 		return 2
 	}
 	if len(s) < 6 {
@@ -530,10 +607,10 @@ func escapeLength(s string) int {
 	return 12
 }
 
-// decodeJSONStringBody decodes the inside of a JSON string literal, accepting raw control characters. body never holds an unescaped quote, because decodeText stops before the closing one.
+// decodeJSONStringBody decodes the inside of a JSON string literal the way parseAnswer does, accepting raw control characters and stray backslashes. body never holds an unescaped quote, because decodeText stops before the closing one.
 func decodeJSONStringBody(body string) (string, error) {
 	var text string
-	err := json.Unmarshal([]byte(escapeControlInStrings(`"`+body+`"`)), &text)
+	err := json.Unmarshal([]byte(repairJSONStrings(`"`+body+`"`)), &text)
 	return text, err
 }
 
