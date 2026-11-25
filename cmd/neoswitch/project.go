@@ -377,7 +377,7 @@ func status(args []string) error {
 	return printStatus(os.Stdout, project, *verbose)
 }
 
-// printStatus answers whether this session uses NeoSwitch, whether Google (Antigravity) is signed in, quota usage when signed in and active, and the one command to run next. Addresses, the backend choice, all quota groups, credits and the daemon state follow when verbose.
+// printStatus answers whether this session uses NeoSwitch, whether Google (Antigravity) is signed in, quota usage when signed in and the target model is offered, and the one command to run next. Addresses, the backend choice, all quota groups, credits and the daemon state follow when verbose.
 func printStatus(w io.Writer, project string, verbose bool) error {
 	dir, err := daemon.Dir()
 	if err != nil {
@@ -404,10 +404,14 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 	}
 	session := info.OptedIn && !gatewayModeOn()
 	activeAgy := session && (info.Backend == "" || info.Backend == label)
+	usageModel := model
+	if activeAgy && info.Model != "" {
+		usageModel = info.Model
+	}
 	var agyStatus antigravityStatus
 	if backendErr == nil && (session || !(through && !running)) {
 		if agy, isAgy := backend.(*provider.AntigravityACP); isAgy {
-			agyStatus = checkAntigravityStatus(agy, activeAgy, activeAgy && verbose)
+			agyStatus = checkAntigravityStatus(agy, usageModel, verbose)
 		}
 	}
 	switch {
@@ -430,6 +434,11 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 	case !session && agyStatus.checked:
 		fmt.Fprintln(w, "This session uses Claude.")
 		fmt.Fprintln(w, "Signed in to Google (Antigravity), not active in this session.")
+		if agyStatus.usage != nil {
+			if writeUsageReport(w, agyStatus.usage, usageModel, verbose, time.Now()) {
+				fmt.Fprintln(w)
+			}
+		}
 		fmt.Fprintf(w, "Run /neoswitch:on to answer with %s from this session's next message.\n", modelName(model))
 	case !session:
 		fmt.Fprintln(w, "This session uses Claude.")
@@ -446,11 +455,7 @@ func printStatus(w io.Writer, project string, verbose bool) error {
 		if activeAgy && agyStatus.checked && agyStatus.signInErr != nil {
 			fmt.Fprintf(w, "Could not check Google (Antigravity) sign-in or usage (%s).\n", agyStatus.signInErr)
 		} else if agyStatus.usage != nil {
-			activeModel := model
-			if info.Model != "" {
-				activeModel = info.Model
-			}
-			if writeUsageReport(w, agyStatus.usage, activeModel, verbose, time.Now()) {
+			if writeUsageReport(w, agyStatus.usage, usageModel, verbose, time.Now()) {
 				fmt.Fprintln(w)
 			}
 		}

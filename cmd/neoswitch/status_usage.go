@@ -36,9 +36,10 @@ type antigravityStatus struct {
 }
 
 // checkAntigravityStatus checks whether agy holds a usable Google sign-in via ACP,
-// and only once confirmed signed in (and requested) fetches quota usage and optional credits.
-// Running `agy -p /usage` while signed out blocks for 60s waiting for OAuth, so SignedIn always runs first.
-func checkAntigravityStatus(agy *provider.AntigravityACP, fetchUsage, fetchCredits bool) antigravityStatus {
+// and only once confirmed signed in (and offering targetModel when known) fetches
+// quota usage and optional credits. Running `agy -p /usage` while signed out blocks
+// for 60s waiting for OAuth, so SignedIn always runs first.
+func checkAntigravityStatus(agy *provider.AntigravityACP, targetModel string, fetchCredits bool) antigravityStatus {
 	st := antigravityStatus{checked: true}
 	signCtx, cancelSign := context.WithTimeout(context.Background(), statusSignInTimeout)
 	defer cancelSign()
@@ -46,7 +47,10 @@ func checkAntigravityStatus(agy *provider.AntigravityACP, fetchUsage, fetchCredi
 	st.signedIn = signed
 	st.models = models
 	st.signInErr = err
-	if err != nil || !signed || !fetchUsage {
+	if err != nil || !signed {
+		return st
+	}
+	if targetModel != "" && len(models) > 0 && !slices.Contains(models, targetModel) {
 		return st
 	}
 	usageCtx, cancelUsage := context.WithTimeout(context.Background(), statusUsageTimeout)

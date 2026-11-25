@@ -141,10 +141,61 @@ func TestStatusAntigravitySignInAndUsage(t *testing.T) {
 		}
 	})
 
-	t.Run("on Claude, agy signed in reports sign-in without invoking usage", func(t *testing.T) {
+	t.Run("on Claude, agy signed in prints quota bars and verbose adds all groups and credits", func(t *testing.T) {
 		isolateBackendEnv(t, false)
 		t.Setenv("ANTHROPIC_BASE_URL", "")
 		installAgy(t)
+		t.Setenv("FAKE_USAGE", sampleUsageJSON)
+		t.Setenv("FAKE_CREDITS", sampleCreditsJSON)
+
+		project := t.TempDir()
+		var out bytes.Buffer
+		if err := printStatus(&out, project, false); err != nil {
+			t.Fatal(err)
+		}
+		text := out.String()
+		for _, want := range []string{
+			"This session uses Claude.",
+			"Signed in to Google (Antigravity), not active in this session.",
+			"Gemini Models — 5-hour limit",
+			"23% used",
+			"Gemini Models — Current week",
+			"6% used",
+			"Resets ",
+			"/neoswitch:on",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("output lacks %q:\n%s", want, text)
+			}
+		}
+		for _, notWant := range []string{"Claude and GPT models", "credits:", "sign-in:"} {
+			if strings.Contains(text, notWant) {
+				t.Fatalf("non-verbose output contains %q:\n%s", notWant, text)
+			}
+		}
+
+		out.Reset()
+		if err := printStatus(&out, project, true); err != nil {
+			t.Fatal(err)
+		}
+		verbose := out.String()
+		for _, want := range []string{
+			"Gemini Models — 5-hour limit",
+			"Claude and GPT models — Current week",
+			"sign-in:  signed in",
+			"credits:  12.5",
+		} {
+			if !strings.Contains(verbose, want) {
+				t.Fatalf("verbose output lacks %q:\n%s", want, verbose)
+			}
+		}
+	})
+
+	t.Run("on Claude, agy signed in without target model does not invoke usage", func(t *testing.T) {
+		isolateBackendEnv(t, false)
+		t.Setenv("ANTHROPIC_BASE_URL", "")
+		installAgy(t)
+		t.Setenv("FAKE_MODELS", "gemini-3.8-flash")
 		marker := filepath.Join(t.TempDir(), "usage-called")
 		t.Setenv("FAKE_USAGE_CALLED", marker)
 		t.Setenv("FAKE_USAGE", sampleUsageJSON)
@@ -154,13 +205,17 @@ func TestStatusAntigravitySignInAndUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := out.String()
-		for _, want := range []string{"This session uses Claude.", "Signed in to Google (Antigravity), not active in this session.", "/neoswitch:on"} {
+		for _, want := range []string{
+			"This session uses Claude.",
+			"Signed in to Google (Antigravity), not active in this session.",
+			"does not offer",
+		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("output lacks %q:\n%s", want, text)
 			}
 		}
 		if _, err := os.Stat(marker); !os.IsNotExist(err) {
-			t.Fatal("inactive session status must not run agy -p /usage")
+			t.Fatal("status without offered target model must not run agy -p /usage")
 		}
 	})
 
