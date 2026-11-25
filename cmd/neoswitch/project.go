@@ -559,7 +559,8 @@ func attach(args []string) error {
 			_, _ = daemon.MovePort(dir, state)
 			return message("NeoSwitch: another program on this computer took port " + port + ", which NeoSwitch used, so this session cannot answer. Start a new session, which uses Claude, and run /neoswitch:on in it to use Gemini.")
 		}
-		return message("NeoSwitch could not start, so this session cannot answer. Start a new Claude Code session, which uses Claude. Details are in " + filepath.Join(dir, "daemon.log") + ".")
+		// The project still points at NeoSwitch, so a new session would fail the same way: the way back is /neoswitch:off, which takes NeoSwitch out of the project. Switching the project back to Claude here would decide for users who use only Gemini.
+		return message("NeoSwitch could not start, so this session cannot answer; the details are in " + filepath.Join(dir, "daemon.log") + ". To use Claude instead, run /neoswitch:off, which takes NeoSwitch out of this project, then start a new session." + removalHelp)
 	}
 	// The first session of a new version moves the open windows to it. The hook before every prompt does it too, in windows whose own binary is gone from the cache, which then run the latest one cached (neoswitch.sh --cached).
 	moving := ""
@@ -591,6 +592,9 @@ func attach(args []string) error {
 	info, running := daemon.Status(state)
 	return message(joinNotes(attachNotice("", model, label, info, running, true), leftover, updateNotice(dir)))
 }
+
+// removalHelp ends a message whose way back may fail as well: the README says how to turn NeoSwitch off, and remove it, by hand.
+const removalHelp = " If that does not help, https://github.com/yldm-ai/neo-switch#turn-it-off-update-or-remove shows how to turn NeoSwitch off or remove it."
 
 // legacyRoute reports a base URL written by a NeoSwitch from before TLS.
 func legacyRoute(base, token string, s daemon.State) bool {

@@ -13,6 +13,14 @@ errors=$(mktemp "${TMPDIR:-/tmp}/neoswitch-hook.XXXXXX") || exit 0
 trap 'rm -f "$errors"' EXIT
 if output=$("$(dirname -- "$0")/neoswitch.sh" attach --pid "$1" --session "$id" 2>"$errors"); then
 	cat "$errors" >&2
+	# An earlier NeoSwitch that runs because this plugin's could not be had (neoswitch.sh, "unavailable") does not know it, so its message would leave the user thinking the update worked: the reason goes first.
+	fallback=$(sed -n 's/^NeoSwitch fallback: //p' "$errors" | tail -n 1 | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+	if [ -n "$fallback" ]; then
+		case $output in
+		'{"systemMessage":"'*) output="{\"systemMessage\":\"NeoSwitch: $fallback ${output#'{"systemMessage":"'}" ;;
+		'') output="{\"systemMessage\":\"NeoSwitch: $fallback\"}" ;;
+		esac
+	fi
 	if [ -n "$output" ]; then
 		printf '%s\n' "$output"
 	fi
@@ -20,5 +28,5 @@ if output=$("$(dirname -- "$0")/neoswitch.sh" attach --pid "$1" --session "$id" 
 fi
 cat "$errors" >&2
 reason=$(awk 'NF { last = $0 } END { print last }' "$errors" | sed 's/^neoswitch: //; s/[.]$//; s/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
-printf '{"systemMessage":"NeoSwitch could not start, so this session cannot answer (%s). Run /neoswitch:off and start a new session to go back to Claude."}\n' "${reason:-no reason given}"
+printf '{"systemMessage":"NeoSwitch could not start, so this session cannot answer (%s). Run /neoswitch:off and start a new session to go back to Claude. If that does not help, https://github.com/yldm-ai/neo-switch#turn-it-off-update-or-remove shows how to turn NeoSwitch off or remove it."}\n' "${reason:-no reason given}"
 exit 0

@@ -37,7 +37,7 @@ Project settings while routed:
 ```
 ANTHROPIC_BASE_URL       = https://127.0.0.1:<port>
 ANTHROPIC_CUSTOM_HEADERS = X-NeoSwitch-Token: <token>
-NODE_EXTRA_CA_CERTS      = <state>/ca-bundle.pem   (the user's own NODE_EXTRA_CA_CERTS contents + NeoSwitch's CA)
+NODE_EXTRA_CA_CERTS      = <state>/tls/bundle.pem   (the user's own NODE_EXTRA_CA_CERTS contents + NeoSwitch's CA)
 CLAUDE_CODE_GATEWAY_HINT_HEADERS = 1               (only when the project does not set it already)
 ```
 
@@ -60,6 +60,9 @@ CLAUDE_CODE_GATEWAY_HINT_HEADERS = 1               (only when the project does n
   - A transient failure answers 529 so that Claude Code retries it: agy exited, a handshake timed out after a cold start, or the upstream is overloaded.
   - Anthropic's own statuses pass through unchanged.
 - **I3. Every failure has a way back inside the same session.** `/neoswitch:off` takes the session out of the opted-in set, and its next request goes to Claude (F7). Nothing waits for a restart.
+  - **The way back does not depend on what failed.** When this plugin's NeoSwitch cannot be built or downloaded, `neoswitch.sh` runs the latest NeoSwitch in the cache, so `/neoswitch:off` still works after a failed update. With none cached, `/neoswitch:off` names the entries to delete from `.claude/settings.local.json` by hand: only a NeoSwitch that ran can have written them. A message whose way back may fail too (NeoSwitch could not start at all) ends with the README's removal steps.
+  - **Turning NeoSwitch off leaves the settings as the user had them.** Enable writes over `NODE_EXTRA_CA_CERTS` and `ANTHROPIC_CUSTOM_HEADERS` (the bundle holds the user's CA certificates, and the headers keep the user's lines), so it first keeps the user's own values from the project's settings in `<state>/replaced/`, or changes nothing if it cannot; Disable puts them back. Before 0.4.10 Disable deleted them, losing, for one, a company proxy's CA file.
+  - **No failure decides for the user.** A failure never switches a project or session back to Claude by itself, since a user may have no Claude account and use only Gemini; the message names the cause, the fix, and `/neoswitch:off` as the way to Claude, which the user chooses (Sen, 2026-11-25). The one exception predates this rule: when another program took NeoSwitch's port, the project's settings are removed, since they would send its sessions to that program.
 - **I4. Sessions that do not use NeoSwitch pay almost nothing.**
   - Hooks on that path are shell only. They never build, download, start agy or the daemon, or touch the network.
   - Every hook exits 0 and has its own short timeout.

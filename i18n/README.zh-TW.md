@@ -59,7 +59,9 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 | 提示說其他 Claude Code 視窗還在共用先前的設定 | 在這個工作階段執行 `/neoswitch:on`，所有開著的視窗都會換到這個工作階段的設定。Windows 上要關掉所有 Claude Code 視窗，重新開啟 Claude Code，再執行 `/neoswitch:on`。 |
 | 提示說 claude.ai connectors 已停用，因為設定了另一個驗證來源 | 現在的 NeoSwitch 不會再造成這個提示，是舊版本造成的。請更新外掛（見下文）。如果仍然出現，代表有別的工具替 Claude Code 設定了 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`。 |
 | 提示說有別的程式佔用了 NeoSwitch 需要的連接埠 | 關掉那個程式後重新啟動 Claude Code，或者執行 `/neoswitch:off`。 |
-| 提示說 NeoSwitch 無法下載它的程式 | 檢查網路連線，然後重新啟動 Claude Code。 |
+| 提示說 NeoSwitch 下載不了它的程式 | 檢查網路連線，然後重新啟動 Claude Code。如果這台電腦之前執行過 NeoSwitch，它會繼續使用那個舊版本，直到下載成功。 |
+| `/neoswitch:off` 本身提示 NeoSwitch 無法執行 | 它會列出要從專案的 `.claude/settings.local.json` 裡刪除的項目；刪掉後開一個新工作階段。[移除 NeoSwitch](#關閉更新與移除) 的第 1 步列的是同樣的項目。 |
+| 移除 NeoSwitch 後，某個專案裡的 Claude Code 連不上 | 這個專案仍然指向 NeoSwitch。依照 [移除 NeoSwitch](#關閉更新與移除) 第 1 步的說明，從 `.claude/settings.local.json` 裡刪掉它的項目，然後開一個新工作階段。 |
 | `/neoswitch:login` 顯示為未知指令 | 更新外掛（見下文），重新啟動 Claude Code，再執行 `/reload-plugins`。 |
 | 提示說你的 Google 帳號的 Antigravity 方案不提供 gemini-4-neon | 你的方案不包含 Gemini 4 Neon，NeoSwitch 無法用它回答，專案會維持使用 Claude。再次執行 `/neoswitch:login`，換一個方案包含它的帳號登入；或者執行 `/neoswitch:off` 並開一個新的工作階段回到 Claude。 |
 
@@ -78,7 +80,7 @@ claude plugin update neoswitch@neoswitch
 
 移除 NeoSwitch：
 
-1. 先在每個開啟過的專案裡執行 `/neoswitch:off`。沒有關掉的專案仍然指向 NeoSwitch，移除後就無法回答了。如果已經移除了外掛，請在每個這樣的專案裡打開 `.claude/settings.local.json`，從 `env` 物件中刪掉 `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`NODE_EXTRA_CA_CERTS`、`CLAUDE_CODE_USE_GATEWAY`，以及舊版本留下的 `ANTHROPIC_AUTH_TOKEN`。
+1. 先在每個開啟過的專案裡執行 `/neoswitch:off`。沒有關掉的專案仍然指向 NeoSwitch，移除後就無法回答了。如果已經移除了外掛，請在每個這樣的專案裡打開 `.claude/settings.local.json`，修改它的 `env` 物件：以 `https://127.0.0.1:` 開頭的 `ANTHROPIC_BASE_URL` 刪掉（舊版本是 `http://127.0.0.1:`，連同旁邊的 `ANTHROPIC_AUTH_TOKEN` 一起刪）；刪掉 `ANTHROPIC_CUSTOM_HEADERS` 裡 `X-NeoSwitch-Token` 那一行，沒有別的內容時整個項目都刪掉；指向 NeoSwitch 資料夾裡 `tls/bundle.pem` 的 `NODE_EXTRA_CA_CERTS` 刪掉，如果你原本在這裡設過自己的 CA 檔案，就把它的路徑填回去；值為 `1` 的 `CLAUDE_CODE_GATEWAY_HINT_HEADERS` 和值為 `0` 的 `CLAUDE_CODE_USE_GATEWAY` 也刪掉，除非是你自己設的。
 2. 關掉正在使用 NeoSwitch 的 Claude Code 視窗，然後在終端機裡執行：
 
 ```bash
@@ -99,7 +101,7 @@ Google 登入資訊由 `agy` 保存，不歸 NeoSwitch 管，移除後仍然保�
 
 當某個專案裡有工作階段在用 Gemini 4 Neon 時，NeoSwitch 會在這個專案的 `.claude/settings.local.json` 的 `env` 物件中加入三項；這個專案裡不再有工作階段使用它時，就把它們刪掉：
 
-- `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS` 和 `NODE_EXTRA_CA_CERTS`：讓這個專案的 Claude Code 請求經過一條只有 NeoSwitch 能回應的加密連線，送到這台電腦上的 NeoSwitch。你切換過的工作階段由 Gemini 4 Neon 回答；其他請求原樣轉給 Claude，用的是你自己的 Claude 登入，NeoSwitch 既不保存也不記錄它。請求標頭裡的金鑰只能用來存取本機的 NeoSwitch。
+- `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS` 和 `NODE_EXTRA_CA_CERTS`：讓這個專案的 Claude Code 請求經過一條只有 NeoSwitch 能回應的加密連線，送到這台電腦上的 NeoSwitch。你切換過的工作階段由 Gemini 4 Neon 回答；其他請求原樣轉給 Claude，用的是你自己的 Claude 登入，NeoSwitch 既不保存也不記錄它。請求標頭裡的金鑰只能用來存取本機的 NeoSwitch。如果檔案裡原本有你自己的 `NODE_EXTRA_CA_CERTS` 或 `ANTHROPIC_CUSTOM_HEADERS`，NeoSwitch 會保留一份副本，刪除自己的項目時把你的值放回去。
 
 在 Git 專案裡，NeoSwitch 還會把 `.claude/settings.local.json` 加進本機儲存庫自己的排除清單（`.git/info/exclude`），讓這個 token 不會被提交；你的 `.gitignore` 不會被改動。
 
