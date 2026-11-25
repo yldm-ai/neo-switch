@@ -332,6 +332,8 @@ Environment:
   OPENAI_BASE_URL      OpenAI API base URL including /v1 (default: https://api.openai.com/v1)
   CLAUDE_CLI_PATH      Claude executable (default: claude)
   ANTIGRAVITY_CLI_PATH  Antigravity executable (default: agy on PATH, then ~/.local/bin/agy)
+  NEOSWITCH_SAFEGUARD  set to off/0/false to disable built-in Auto Mode safety checks
+  NEOSWITCH_SAFEGUARD_MODEL  Antigravity model for Auto Mode safety checks (default: background model, or GEMINI_MODEL)
   NEOSWITCH_LISTEN     serve listen address (default: 127.0.0.1:8080)
   NEOSWITCH_AUTH_TOKEN token for standalone serve, required off loopback`)
 }

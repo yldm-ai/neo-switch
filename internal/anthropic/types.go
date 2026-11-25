@@ -17,6 +17,30 @@ type MessagesRequest struct {
 	Stop        []string        `json:"stop_sequences,omitempty"`
 	// OutputConfig carries the effort Claude Code sends with every request (its /effort and --effort setting, "medium" by default).
 	OutputConfig *OutputConfig `json:"output_config,omitempty"`
+	// Safeguards carries Claude Code's server-side Auto Mode review requests (type "dangerous_tool_use").
+	Safeguards []SafeguardRequest `json:"safeguards,omitempty"`
+}
+
+type SafeguardRequest struct {
+	Type              string          `json:"type"`
+	ClassifierContext json.RawMessage `json:"classifier_context,omitempty"`
+}
+
+type SafeguardResult struct {
+	Type   string          `json:"type"`
+	Status SafeguardStatus `json:"status"`
+}
+
+type SafeguardStatus struct {
+	Type     string                      `json:"type"`
+	ToolUses map[string]SafeguardVerdict `json:"tool_uses,omitempty"`
+}
+
+type SafeguardVerdict struct {
+	Type        string `json:"type"`
+	Outcome     string `json:"outcome,omitempty"`
+	Explanation string `json:"explanation,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 type OutputConfig struct {
@@ -75,8 +99,9 @@ type Response struct {
 	Model        string         `json:"model"`
 	Content      []ContentBlock `json:"content"`
 	StopReason   string         `json:"stop_reason"`
-	StopSequence *string        `json:"stop_sequence"`
-	Usage        Usage          `json:"usage"`
+	StopSequence     *string           `json:"stop_sequence"`
+	Usage            Usage             `json:"usage"`
+	SafeguardResults []SafeguardResult `json:"safeguard_results,omitempty"`
 }
 
 type Usage struct {

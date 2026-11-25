@@ -356,6 +356,76 @@ func TestClaudeCode(t *testing.T) {
 			t.Fatalf("result = %q", out.Result)
 		}
 	})
+
+	t.Run("auto mode", func(t *testing.T) {
+		t.Run("not_flagged runs bash without allowedTools", func(t *testing.T) {
+			p := newProject(t)
+			_, proxy := newUpstream(t, func(c *call) (reply, error) {
+				if len(c.Tools()) == 0 && strings.Contains(c.System(), "security classifier") {
+					return text(`{"verdicts":{"0":{"flagged":false,"explanation":""}}}`), nil
+				}
+				r := c.Response("Bash")
+				if r == nil {
+					return calls(toolCall("Bash", "sig-auto-ok", map[string]any{"command": "python3 -c 'print(54321)'", "description": "Print auto marker"})), nil
+				}
+				if output, isErr := r.output(); isErr || !strings.Contains(output, "54321") {
+					return reply{}, reject("Bash result = %q (error %v)", output, isErr)
+				}
+				return text("auto mode ran 54321"), nil
+			})
+			p.proxy = proxy
+			out := p.run("Print 54321 with python", "--permission-mode", "auto")
+			if out.Result != "auto mode ran 54321" {
+				t.Fatalf("result = %q", out.Result)
+			}
+		})
+
+		t.Run("flagged blocks bash with classifier explanation", func(t *testing.T) {
+			p := newProject(t)
+			_, proxy := newUpstream(t, func(c *call) (reply, error) {
+				if len(c.Tools()) == 0 && strings.Contains(c.System(), "security classifier") {
+					return text(`{"verdicts":{"0":{"flagged":true,"explanation":"E2E blocked dangerous command"}}}`), nil
+				}
+				r := c.Response("Bash")
+				if r == nil {
+					return calls(toolCall("Bash", "sig-auto-block", map[string]any{"command": "python3 -c 'print(99999)'", "description": "Run blocked command"})), nil
+				}
+				output, isErr := r.output()
+				if !isErr || !strings.Contains(output, "E2E blocked dangerous command") {
+					return reply{}, reject("expected classifier block, got %q (error %v)", output, isErr)
+				}
+				return text("blocked as expected"), nil
+			})
+			p.proxy = proxy
+			out := p.run("Run blocked command", "--permission-mode", "auto")
+			if out.Result != "blocked as expected" {
+				t.Fatalf("result = %q", out.Result)
+			}
+		})
+
+		t.Run("malformed classifier verdict fails closed", func(t *testing.T) {
+			p := newProject(t)
+			_, proxy := newUpstream(t, func(c *call) (reply, error) {
+				if len(c.Tools()) == 0 && strings.Contains(c.System(), "security classifier") {
+					return text("not-valid-json"), nil
+				}
+				r := c.Response("Bash")
+				if r == nil {
+					return calls(toolCall("Bash", "sig-auto-err", map[string]any{"command": "python3 -c 'print(77777)'", "description": "Run command with broken classifier"})), nil
+				}
+				output, isErr := r.output()
+				if !isErr || strings.Contains(output, "77777") {
+					return reply{}, reject("expected fail-closed block without executing bash, got %q (error %v)", output, isErr)
+				}
+				return text("failed closed"), nil
+			})
+			p.proxy = proxy
+			out := p.run("Run command with broken classifier", "--permission-mode", "auto")
+			if out.Result != "failed closed" {
+				t.Fatalf("result = %q", out.Result)
+			}
+		})
+	})
 }
 
 // replayed checks that the history replays the named function call with its thought signature, which Gemini 3+ requires.

@@ -46,7 +46,7 @@ Google の利用規約に関する警告を表示したあと、Google の [Anti
 - 回答の最初の文字が出るまで 5〜40 秒かかることがありますが、正常です。`/neoswitch:login` でログインした場合は、`/effort low` で回答が早く始まります。
 - インストールや更新のあと最初の NeoSwitch コマンドは、準備のために最大 1 分ほどかかることがあります。
 - `/neoswitch:status` を実行すると、このセッションが Claude と Gemini 4 Neon のどちらを使っているか、次に何をすればよいかがいつでもわかります。
-- Gemini 4 Neon を使うセッションで auto mode を使うには、Claude Code を `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` で起動してください。通常の安全チェックは Anthropic のサーバーで動き、Gemini の操作はサーバーから見えないため、Claude Code は操作の前に確認を求めて止まります（一度だけメッセージでお知らせします）。この方法で起動すると、Claude Code は各操作のチェックを Claude に任せます。NeoSwitch はそのチェックを、判断対象の会話とともにあなたの Claude ログインで Claude に送ります（Claude の利用枠を少し使います）。Claude が応答しないときだけ Gemini に送ります。それでも Claude Code が auto mode に独自のチェックがないと表示する場合、あなたのアカウントでは Gemini で auto mode を使えません。Shift+Tab で別のモードを選んでください。
+- Gemini 4 Neon を使うセッションでも auto mode がそのまま使えます。NeoSwitch が内蔵のフェイルクローズ安全分類器（Antigravity では既定で `gemini-3.8-flash`、その他のバックエンドでは設定済みモデル）で各操作を判定するため、Claude Code の再起動や Claude の利用枠は不要です。内蔵チェックを無効にするには `NEOSWITCH_SAFEGUARD=off` を設定してください。Claude に判定させたい場合は `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` で起動します（Claude の利用枠を少し使い、応答がないときだけ Gemini にフォールバックします）。
 - 新しい NeoSwitch が出ると、セッション開始時のメッセージでお知らせし、更新コマンドを表示します。自動更新がオンなら Claude Code が自分でインストールし、すでに開いているウィンドウも、新しい Claude Code セッションが始まった時点で新しい版に切り替わります。Windows では Claude Code のウィンドウをすべて閉じて開き直すと反映されます。
 
 ## うまくいかないとき

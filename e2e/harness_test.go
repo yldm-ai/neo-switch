@@ -273,7 +273,7 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var turn reply
 	var err error
-	if len(c.Tools()) == 0 {
+	if len(c.Tools()) == 0 && !strings.Contains(c.System(), "security classifier") {
 		// Claude Code's own side requests (titles, summaries, classifiers) declare no tools; they are not part of the scripted conversation.
 		turn = text("ok")
 	} else {

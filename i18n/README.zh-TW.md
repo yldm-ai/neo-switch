@@ -46,7 +46,7 @@ NeoSwitch 讓 Claude Code 改用 Google 的 Gemini 4 Neon 模型來回答，Clau
 - 每次回答可能要等 5 到 40 秒才出現第一個字，這是正常的。如果你是用 `/neoswitch:login` 登入的，輸入 `/effort low` 可以讓回答更快開始。
 - 安裝或更新後的第一條 NeoSwitch 指令可能要等上一分鐘，NeoSwitch 正在做準備。
 - 隨時可以執行 `/neoswitch:status`，它會告訴你目前工作階段用的是 Claude 還是 Gemini 4 Neon，以及下一步該做什麼。
-- 在使用 Gemini 4 Neon 的工作階段裡用 auto mode，需要用 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` 啟動 Claude Code。auto mode 平時的安全檢查在 Anthropic 的伺服器上執行，伺服器看不到 Gemini 做了什麼，所以 Claude Code 會在每次操作前停下來問你；會有一則提示告訴你一次。這樣啟動後，Claude Code 改由 Claude 檢查每個操作：NeoSwitch 把這些檢查連同它們要判斷的對話，用你的 Claude 登入傳給 Claude（會用掉一些 Claude 用量），只有 Claude 不回應時才交給 Gemini。如果 Claude Code 隨後說 auto mode 沒有自己的檢查，表示你的帳號無法在 Gemini 工作階段裡用 auto mode，請按 Shift+Tab 換一種模式。
+- 在使用 Gemini 4 Neon 的工作階段裡，auto mode 開箱即用：NeoSwitch 內建了預設保守攔截（fail-closed）的安全分類器（Antigravity 下預設使用 `gemini-3.8-flash`，其他後端使用目前設定的模型），無需重新啟動 Claude Code，也不消耗 Claude 用量。如需關閉 NeoSwitch 內建檢查，可設定 `NEOSWITCH_SAFEGUARD=off`；如需改由 Claude 檢查每個操作，可用 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` 啟動（會消耗少量 Claude 用量，Claude 無回應時退回 Gemini）。
 - 有新版 NeoSwitch 時，工作階段開頭的提示會告訴你，並列出更新指令。開啟了自動更新的話，Claude Code 會自己裝好新版；已經開著的視窗在有新的 Claude Code 工作階段啟動時就會換到新版。Windows 上要關閉所有 Claude Code 視窗再重新開啟後才生效。
 
 ## 出了問題怎麼辦

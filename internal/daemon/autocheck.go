@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-// Auto mode's safety check. With CLAUDE_CODE_AUTO_MODE_SERVER=0, Claude Code asks a Claude model, through the session's base URL, whether each action may run. In a session switched to Gemini that request would reach Gemini, which would then judge its own actions, and judge them badly: Claude Code reads the verdict by the reply format, stop sequence and thresholds of its Claude classifier. So the check passes through to Anthropic with the user's credential, as in a Claude session, and Gemini answers it only when Anthropic does not, for example once the user's Claude usage ran out. The server-side check, Claude Code's default, cannot work in such a session at all: its verdict comes with the answer of the model that chose the action, and Anthropic never sees an action Gemini chose. See docs/design-session-routing.md, "Auto mode".
+// Auto mode's client-side safety check (CLAUDE_CODE_AUTO_MODE_SERVER=0). By default, NeoSwitch answers Claude Code's server-side Auto Mode safeguards natively in internal/server/safeguard.go so Auto Mode works without restarting Claude Code or spending Claude usage. When a user explicitly launches Claude Code with CLAUDE_CODE_AUTO_MODE_SERVER=0, Claude Code asks a Claude model as an auxiliary request instead; in a switched session that check passes through to Anthropic with the user's credential, and Gemini answers it only when Anthropic does not (for example once Claude usage ran out). See docs/design-session-routing.md, "Auto mode".
 
 // requestClassHeader is the header in which Claude Code names the kind of request; the safety check is an auxiliary request, never the main thread.
 const requestClassHeader = "X-Claude-Code-Request-Class"

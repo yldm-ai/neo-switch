@@ -51,6 +51,7 @@ Gemini 3+ attaches a `thoughtSignature` to function calls and rejects a later re
 - Text parts become `text` blocks; `thought` parts are skipped; each `functionCall` becomes a `tool_use` block. Responses containing a tool call have `stop_reason: "tool_use"`.
 - Finish reasons: `STOP` → `end_turn` / `tool_use`; `MAX_TOKENS` → `max_tokens`; safety, recitation and blocklist reasons → `refusal`. A blocked prompt (no candidates, `promptFeedback.blockReason`) is a `refusal` with empty content. Finish reasons that mean the turn failed (`MALFORMED_FUNCTION_CALL`, `UNEXPECTED_TOOL_CALL`, `MISSING_THOUGHT_SIGNATURE`, `OTHER`, ...) are errors, never a silent `end_turn`.
 - Usage: `input_tokens` = prompt tokens minus cached tokens, `cache_read_input_tokens` = cached tokens, `output_tokens` = candidate plus thinking tokens.
+- Auto Mode safeguards: when the request carries `safeguards` (type `dangerous_tool_use`) and `NEOSWITCH_SAFEGUARD` is not disabled, NeoSwitch evaluates emitted `tool_use` blocks with an isolated, tool-free classifier pass and returns `safeguard_results` on the response (or in `message_delta.delta` when streaming, sending `ping` keepalives while evaluating). Turns with no `tool_use` blocks return `status.type = "available"` with empty `tool_uses`. Any classifier timeout, error, or malformed verdict returns `status.type = "unavailable"` (fail closed).
 
 ## Streaming
 

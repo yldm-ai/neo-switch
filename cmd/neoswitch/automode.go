@@ -10,19 +10,33 @@ import (
 // autoModeServerEnv switches auto mode's server-side check off; Claude Code reads it once, at launch.
 const autoModeServerEnv = "CLAUDE_CODE_AUTO_MODE_SERVER"
 
-// autoModeNote explains what Claude Code's own message about the check cannot: in a session NeoSwitch answers with Gemini, auto mode's default check, which runs on Anthropic's server, never sees the actions, so Claude Code stops before each one. Started with the check off, Claude Code asks for it itself, and NeoSwitch sends that request to Claude (internal/daemon/autocheck.go).
-const autoModeNote = "NeoSwitch: auto mode cannot check this session's actions, as its check runs on Anthropic's server, which never sees what Gemini does, so Claude Code will stop before actions to ask you. To use auto mode with Gemini, start Claude Code with " + autoModeServerEnv + "=0: Claude Code then asks Claude about each action itself, with your Claude login. Or choose another permission mode with Shift+Tab."
+// autoModeSafeguardEnv turns NeoSwitch's built-in Auto Mode classifier off when set to 0/false/no/off.
+const autoModeSafeguardEnv = "NEOSWITCH_SAFEGUARD"
 
-// autoModeUnchecked reports whether a session in permission mode mode, started with value as autoModeServerEnv, has auto mode on without a check that works with Gemini.
-func autoModeUnchecked(mode, value string) bool {
+// autoModeNote is shown once per session only when the user explicitly turned off NeoSwitch's
+// built-in Auto Mode classifier (NEOSWITCH_SAFEGUARD=off) while running in auto mode without
+// CLAUDE_CODE_AUTO_MODE_SERVER=0.
+const autoModeNote = "NeoSwitch: NEOSWITCH_SAFEGUARD is off, so auto mode cannot check this session's actions and Claude Code will ask before actions. Unset NEOSWITCH_SAFEGUARD to use NeoSwitch's built-in check, start Claude Code with " + autoModeServerEnv + "=0 to have Claude check actions with your Claude login, or choose another permission mode with Shift+Tab."
+
+// autoModeUnchecked reports whether a session in permission mode mode, started with serverVal
+// as CLAUDE_CODE_AUTO_MODE_SERVER and safeguardVal as NEOSWITCH_SAFEGUARD, has auto mode on
+// without any check enabled.
+func autoModeUnchecked(mode, serverVal, safeguardVal string) bool {
 	if mode != "auto" {
 		return false
 	}
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "0", "false", "no", "off":
+	if !envOff(safeguardVal) {
 		return false
 	}
-	return true
+	return !envOff(serverVal)
+}
+
+func envOff(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "false", "no", "off":
+		return true
+	}
+	return false
 }
 
 // autoModeNotesKept is how long the marks of sessions that saw the note are kept; a session left open longer sees it once more.

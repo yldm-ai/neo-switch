@@ -13,21 +13,25 @@ import (
 
 func TestAutoModeUnchecked(t *testing.T) {
 	for _, c := range []struct {
-		mode, value string
-		want        bool
+		mode, serverVal, safeguardVal string
+		want                          bool
 	}{
-		{"auto", "", true},
-		{"auto", "1", true},
-		{"auto", "0", false},
-		{"auto", " False ", false},
-		{"auto", "off", false},
-		{"default", "", false},
-		{"acceptEdits", "", false},
-		{"bypassPermissions", "", false},
-		{"", "", false},
+		{"auto", "", "", false},
+		{"auto", "1", "", false},
+		{"auto", "", "on", false},
+		{"auto", "", "off", true},
+		{"auto", "1", "0", true},
+		{"auto", "", " False ", true},
+		{"auto", "0", "off", false},
+		{"auto", " False ", "off", false},
+		{"auto", "off", "off", false},
+		{"default", "", "off", false},
+		{"acceptEdits", "", "off", false},
+		{"bypassPermissions", "", "off", false},
+		{"", "", "off", false},
 	} {
-		if got := autoModeUnchecked(c.mode, c.value); got != c.want {
-			t.Errorf("mode %q, %s=%q: %v", c.mode, autoModeServerEnv, c.value, got)
+		if got := autoModeUnchecked(c.mode, c.serverVal, c.safeguardVal); got != c.want {
+			t.Errorf("mode %q, %s=%q, %s=%q: %v", c.mode, autoModeServerEnv, c.serverVal, autoModeSafeguardEnv, c.safeguardVal, got)
 		}
 	}
 }
@@ -58,7 +62,6 @@ func TestFirstAutoModeNote(t *testing.T) {
 	}
 }
 
-// Before a prompt, a session that Gemini answers in auto mode is told once how to get auto mode's check; other sessions and modes hear nothing.
 func TestAttachBeforeAPromptNotesAutoMode(t *testing.T) {
 	stateDir := isolateBackendEnv(t, true)
 	id := inSession(t)
@@ -71,11 +74,16 @@ func TestAttachBeforeAPromptNotesAutoMode(t *testing.T) {
 	}
 	t.Setenv("ANTHROPIC_BASE_URL", state.BaseURL())
 	t.Setenv(autoModeServerEnv, "")
+	t.Setenv(autoModeSafeguardEnv, "")
 	prompt := func(session, mode string) string {
 		return stdoutOf(t, func() error {
 			return attach([]string{"--quiet", "--pid", strconv.Itoa(os.Getpid()), "--session", session, "--mode", mode})
 		})
 	}
+	if out := prompt(id, "auto"); out != "" {
+		t.Fatalf("default auto mode with built-in safeguards should not warn: %q", out)
+	}
+	t.Setenv(autoModeSafeguardEnv, "off")
 	if out := prompt(id, "default"); out != "" {
 		t.Fatalf("default mode: %q", out)
 	}
@@ -84,8 +92,8 @@ func TestAttachBeforeAPromptNotesAutoMode(t *testing.T) {
 		t.Fatalf("started with the server check off: %q", out)
 	}
 	t.Setenv(autoModeServerEnv, "")
-	if out := prompt(id, "auto"); !strings.HasPrefix(out, `{"systemMessage":`) || !strings.Contains(out, autoModeServerEnv+"=0") {
-		t.Fatalf("auto mode: %q", out)
+	if out := prompt(id, "auto"); !strings.HasPrefix(out, `{"systemMessage":`) || !strings.Contains(out, autoModeSafeguardEnv) {
+		t.Fatalf("auto mode with NEOSWITCH_SAFEGUARD=off: %q", out)
 	}
 	if out := prompt(id, "auto"); out != "" {
 		t.Fatalf("the note again: %q", out)
