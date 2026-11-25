@@ -52,7 +52,7 @@ func (r *promptRenderer) context(req translate.Request) (system, tools string) {
 	}
 	if len(req.Config.Tools) > 0 {
 		declarations, _ := json.Marshal(req.Config.Tools)
-		tools = string(declarations) + "\n"
+		tools = agyCommands.json(string(declarations)) + "\n"
 	}
 	return system, tools
 }
@@ -182,7 +182,7 @@ func (p *promptBuilder) writeParts(parts []*genai.Part) {
 			continue
 		}
 		if part.Text != "" {
-			p.out.WriteString(part.Text)
+			p.out.WriteString(agyCommands.text(part.Text))
 			p.out.WriteString("\n")
 		}
 		if part.InlineData != nil {
@@ -190,11 +190,11 @@ func (p *promptBuilder) writeParts(parts []*genai.Part) {
 		}
 		if part.FunctionCall != nil {
 			args, _ := json.Marshal(part.FunctionCall.Args)
-			fmt.Fprintf(&p.out, "[tool call %s %s]\n", part.FunctionCall.Name, args)
+			fmt.Fprintf(&p.out, "[tool call %s %s]\n", part.FunctionCall.Name, agyCommands.json(string(args)))
 		}
 		if part.FunctionResponse != nil {
 			response, _ := json.Marshal(part.FunctionResponse.Response)
-			fmt.Fprintf(&p.out, "[tool result %s %s]\n", part.FunctionResponse.Name, response)
+			fmt.Fprintf(&p.out, "[tool result %s %s]\n", part.FunctionResponse.Name, agyCommands.json(string(response)))
 			for _, media := range part.FunctionResponse.Parts {
 				if media != nil && media.InlineData != nil {
 					p.attach(media.InlineData.MIMEType, media.InlineData.Data)
