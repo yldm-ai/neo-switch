@@ -45,7 +45,7 @@ type AntigravityACP struct {
 	// unguarded is set for good once agy ran a tool without the tool guard (acp_guard.go): every later request is refused.
 	unguarded atomic.Bool
 
-	// promptOverhead is how many input tokens agy adds around every prompt (its own agent instructions, about 14k for bare-llm), learned from the usage of earlier answers. ACP reports usage only after an answer, so estimates made before one need it.
+	// promptOverhead is how many input tokens agy adds around every prompt (its own agent instructions, under 1k for the slim neoswitch agent), learned from the usage of small fresh answers. ACP reports usage only after an answer, so estimates made before one need it.
 	promptOverhead atomic.Int64
 
 	// PendingSignIn returns the link of a sign-in by code that is waiting for its code, or "".
@@ -95,7 +95,7 @@ func NewAntigravityACPFromEnv(ctx context.Context) (*AntigravityACP, error) {
 	}
 	agent := strings.TrimSpace(os.Getenv("ANTIGRAVITY_ACP_AGENT"))
 	if agent == "" {
-		agent = "bare-llm"
+		agent = defaultACPAgent
 	}
 	// agy runs in a folder of NeoSwitch's own, never the user's project: see acp_guard.go.
 	stateDir, err := daemon.Dir()
@@ -346,6 +346,9 @@ func promptTextTokens(req translate.Request) int {
 	return len([]rune(text)) / 4
 }
 
+// maxOverheadLearnTokens bounds the estimated size of a fresh request used to learn promptOverhead. With the slim neoswitch agent (~0.5k-1k overhead), a large prompt's character-count estimate error would swamp the real overhead.
+const maxOverheadLearnTokens = 4000
+
 // run sends the request to agy and passes each chunk of the answer to onText as it arrives. It continues the session holding the request's conversation when there is one, and otherwise opens a new session that reads the whole conversation, in several prompts when it is too long for one. The caller ends the returned exchange; when run fails, it has already closed the session and released agy. When ctx ends first, the prompt is cancelled in agy.
 func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText func(string)) (*acpExchange, error) {
 	if a.unguarded.Load() {
@@ -361,16 +364,32 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 	pieces, continued := a.continuation(x, req, keys)
 	fresh := x.session == nil
 	if fresh {
-		if x.session, err = a.newSession(ctx, c, x.model); err != nil {
+		rawSystem, rawTools := rawContext(req)
+		var appendText string
+		var overflow []acpPiece
+		if c.systemPromptAppend {
+			sys, tools := neutralizeContext(rawSystem, rawTools)
+			appendText, overflow = buildSystemPromptAppend(sys, tools)
+		}
+		if x.session, err = a.newSession(ctx, c, x.model, appendText); err != nil {
 			c.release()
 			return nil, err
 		}
-		pieces = a.freshPieces(x.session, req, c.imagePrompts)
+		if x.session.systemPrompted {
+			x.session.system, x.session.tools = textKey(rawSystem), textKey(rawTools)
+			pieces = append(overflow, messagePieces(req.Contents, c.imagePrompts)...)
+		} else {
+			pieces = a.freshPieces(x.session, req, c.imagePrompts)
+		}
 		if x.role == roleOther && len(req.Contents) > 0 {
 			x.branch = keys[len(req.Contents)-1]
 		}
 	}
-	prompts := acpPrompts(pieces, continued)
+	instructions := acpAnswerInstructions
+	if x.session.systemPrompted {
+		instructions = ""
+	}
+	prompts := acpPrompts(pieces, instructions, continued)
 	if len(prompts) > 1 {
 		size := 0
 		for _, prompt := range prompts {
@@ -389,17 +408,19 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 			return nil, err
 		}
 	}
-	// Learn only from a new session of the main model read in one prompt without images: image tokens are not part of the text estimate, a continued session holds more than this request's text, and the background model's overhead says nothing about the main thread's.
+	// Learn only from a small new session of the main model read in one prompt without images: image tokens are not part of the text estimate, a continued session holds more than this request's text, the background model's overhead says nothing about the main thread's, and a large fresh prompt's character-count error would swamp the slim agent's small overhead.
 	if fresh && x.session.model == a.model && len(prompts) == 1 && len(prompts[0].images) == 0 && x.result.Usage != nil {
-		if overhead := promptTokens(x.result.Usage) - int64(promptTextTokens(req)); overhead > 0 {
-			a.promptOverhead.Store(overhead)
+		if est := promptTextTokens(req); est <= maxOverheadLearnTokens {
+			if overhead := promptTokens(x.result.Usage) - int64(est); overhead > 0 {
+				a.promptOverhead.Store(overhead)
+			}
 		}
 	}
 	return x, nil
 }
 
 // acpToolUseRepair asks a session whose answer was a malformed tool call to write it again; %s is what was wrong.
-const acpToolUseRepair = "Your last answer started a tool call but was not valid JSON (%s), so Claude Code could not run it. Write the same answer again as exactly one JSON object and no markdown: {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}, optionally with \"text\". Inside JSON strings, escape every double quote as \\\" and every literal backslash as \\\\.\n\n"
+const acpToolUseRepair = "Your last answer started a tool call but was not valid JSON (%s), so Claude Code could not run it. Write the same answer again as exactly one JSON object and no markdown: {\"tool_uses\":[{\"name\":\"tool name\",\"input\":{...}},...]} or {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}, optionally with \"text\". Inside JSON strings, escape every double quote as \\\" and every literal backslash as \\\\.\n\n"
 
 // repairToolUse sends acpToolUseRepair to the session that wrote a malformed tool call and passes the new answer to onText. Like run, it closes the session and releases agy when it fails.
 func (a *AntigravityACP) repairToolUse(ctx context.Context, x *acpExchange, req translate.Request, malformed *malformedToolUseError, onText func(string)) error {
@@ -445,17 +466,18 @@ func (a *AntigravityACP) continuation(x *acpExchange, req translate.Request, key
 		continued = acpBranchContinued
 		x.branch = keys[n-1]
 	}
-	r := &promptRenderer{acceptImages: x.c.imagePrompts}
-	system, tools := r.context(req)
-	systemKey, toolsKey := textKey(system), textKey(tools)
+	rawSystem, rawTools := rawContext(req)
+	systemKey, toolsKey := textKey(rawSystem), textKey(rawTools)
 	if systemKey == s.system {
-		system = ""
+		rawSystem = ""
 	}
 	if toolsKey == s.tools {
-		tools = ""
+		rawTools = ""
 	}
 	s.system, s.tools = systemKey, toolsKey
+	system, tools := neutralizeContext(rawSystem, rawTools)
 	pieces := contextPieces(system, tools, true)
+	r := &promptRenderer{acceptImages: x.c.imagePrompts}
 	for _, content := range req.Contents[from:] {
 		pieces = append(pieces, r.entry(content))
 	}
@@ -464,21 +486,36 @@ func (a *AntigravityACP) continuation(x *acpExchange, req translate.Request, key
 
 // freshPieces renders the whole request for a new session and records what the session reads.
 func (a *AntigravityACP) freshPieces(s *acpSession, req translate.Request, acceptImages bool) []acpPiece {
-	system, tools := (&promptRenderer{acceptImages: acceptImages}).context(req)
-	s.system, s.tools = textKey(system), textKey(tools)
+	rawSystem, rawTools := rawContext(req)
+	s.system, s.tools = textKey(rawSystem), textKey(rawTools)
 	return conversationPieces(req, acceptImages)
 }
 
-// newSession opens a session answering with model. A background model the account's plan does not offer gives way to the main model: background requests are no reason to fail.
-func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn, model string) (*acpSession, error) {
-	session, err := c.conn.NewSession(ctx, acp.NewSessionRequest{Cwd: a.cwd, McpServers: []acp.McpServer{}})
+// newSession opens a session answering with model. When systemPrompt is non-empty and agy advertises _meta.antigravity.systemPrompt.append, it is attached on session/new so agy pins it in the session's system prompt. A background model the account's plan does not offer gives way to the main model: background requests are no reason to fail.
+func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn, model, systemPrompt string) (*acpSession, error) {
+	req := acp.NewSessionRequest{Cwd: a.cwd, McpServers: []acp.McpServer{}}
+	systemPrompted := c.systemPromptAppend && systemPrompt != ""
+	if systemPrompted {
+		meta, err := acp.NewMeta(map[string]any{
+			"antigravity": map[string]any{
+				"systemPrompt": map[string]any{
+					"append": systemPrompt,
+				},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode Antigravity systemPrompt meta: %w", err)
+		}
+		req.Meta = meta
+	}
+	session, err := c.conn.NewSession(ctx, req)
 	if err != nil {
 		return nil, a.requestError(ctx, c, "create Antigravity ACP session", err)
 	}
 	if session.SessionId == "" {
 		return nil, errors.New("Antigravity ACP returned no session ID")
 	}
-	s := &acpSession{id: session.SessionId, options: session.ConfigOptions}
+	s := &acpSession{id: session.SessionId, options: session.ConfigOptions, systemPrompted: systemPrompted}
 	offered := modelIDs(session.ConfigOptions)
 	if model != a.model && len(offered) > 0 && !slices.Contains(offered, model) {
 		if !a.backgroundMissing.Swap(true) {
@@ -739,9 +776,23 @@ func (a *AntigravityACP) connection(ctx context.Context) (*acpConn, error) {
 		return nil, a.retryable(fmt.Errorf("initialize Antigravity ACP: %w", err))
 	}
 	c.imagePrompts = init.AgentCapabilities.PromptCapabilities.Image
+	c.systemPromptAppend = supportsSystemPromptAppend(init)
 	a.conn = c
 	c.acquire()
 	return c, nil
+}
+
+// supportsSystemPromptAppend reports whether agy advertised _meta.antigravity.systemPrompt.append: true in its initialize response (on agentCapabilities._meta or top-level _meta).
+func supportsSystemPromptAppend(init acp.InitializeResponse) bool {
+	check := func(meta acp.Meta) bool {
+		var ag struct {
+			SystemPrompt struct {
+				Append bool `json:"append"`
+			} `json:"systemPrompt"`
+		}
+		return meta.Get("antigravity", &ag) == nil && ag.SystemPrompt.Append
+	}
+	return check(init.AgentCapabilities.Meta) || check(init.Meta)
 }
 
 // discard stops c if it is still the current connection; requests already holding it fail and the next request starts a new agy.
@@ -834,8 +885,9 @@ type acpConn struct {
 	cmd *exec.Cmd
 	// workspace is the folder agy runs in, which holds the tool guard's records.
 	workspace    string
-	conn         *acp.ClientSideConnection
-	imagePrompts bool
+	conn               *acp.ClientSideConnection
+	imagePrompts       bool
+	systemPromptAppend bool
 
 	started time.Time
 

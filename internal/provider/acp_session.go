@@ -69,7 +69,10 @@ func originRole(o translate.Origin) (acpRole, string) {
 type acpSession struct {
 	id      acp.SessionId
 	options []acp.SessionConfigOption
-	// system and tools are the hashes of the system instructions and tool definitions the session read last.
+	// systemPrompted reports whether this session was created with the answer
+	// instructions, system prompt, and tools pinned via _meta.antigravity.systemPrompt.append.
+	systemPrompted bool
+	// system and tools are the hashes of the raw (pre-neutralization) system instructions and tool definitions the session read last.
 	system, tools string
 	// level is the thought level NeoSwitch selected, or "" for agy's default.
 	level acp.SessionConfigValueId

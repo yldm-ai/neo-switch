@@ -77,7 +77,26 @@ func selfExecutable() (string, string, error) {
 	return selfPath, selfSum, selfErr
 }
 
-// installToolGuard prepares workspace: the hook binary, hooks.json, and the decision records, dropping records older than a day and hook binaries older than a month. Files are rewritten only when their content changes, atomically, so a running agy never reads half a file.
+const (
+	// defaultACPAgent is the slim custom agent NeoSwitch installs in its workspace.
+	defaultACPAgent = "neoswitch"
+	// slimAgentDefinition is .agents/agents/neoswitch.md. excludeDefaultComponents
+	// drops agy's ~14k-token coding-agent prompt and built-in tools other than
+	// search_web (used for Claude Code's WebSearch). inheritCustomizations stays
+	// true so .agents/hooks.json (the PreToolUse guard) still fires on every tool
+	// call. mainAgent is omitted so agy -p /usage and /credits remain unaffected.
+	slimAgentDefinition = `---
+name: neoswitch
+description: Minimal model relay agent for NeoSwitch
+excludeDefaultComponents: true
+inheritCustomizations: true
+tools:
+  - search_web
+---
+`
+)
+
+// installToolGuard prepares workspace: the hook binary, hooks.json, the slim custom agent definition, and the decision records, dropping records older than a day and hook binaries older than a month. Files are rewritten only when their content changes, atomically, so a running agy never reads half a file.
 func installToolGuard(workspace string) error {
 	exe, sum, err := selfExecutable()
 	if err != nil {
@@ -85,7 +104,7 @@ func installToolGuard(workspace string) error {
 	}
 	agents := filepath.Join(workspace, ".agents")
 	records := filepath.Join(workspace, guardRecords)
-	for _, dir := range []string{filepath.Join(agents, "bin"), records} {
+	for _, dir := range []string{filepath.Join(agents, "bin"), filepath.Join(agents, "agents"), records} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
@@ -111,6 +130,9 @@ func installToolGuard(workspace string) error {
 		}},
 	}}, "", "  ")
 	if err := writeIfChanged(filepath.Join(agents, "hooks.json"), append(config, '\n')); err != nil {
+		return err
+	}
+	if err := writeIfChanged(filepath.Join(agents, "agents", defaultACPAgent+".md"), []byte(slimAgentDefinition)); err != nil {
 		return err
 	}
 	pruneOlder(records, guardRecordAge, "")

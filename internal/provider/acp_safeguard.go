@@ -13,9 +13,10 @@ import (
 // JudgeSafeguard runs a plain-text Auto Mode safety classification prompt in a fresh,
 // ephemeral ACP session using the background model (gemini-3.8-flash by default, or
 // NEOSWITCH_SAFEGUARD_MODEL) at low thought level. It bypasses acp_envelope.go so the
-// classifier outputs its verdict JSON directly without nested JSON escaping, neutralizes
-// agy slash commands, never pollutes the idle session pool, and fails closed if agy
-// attempts any tool call.
+// classifier outputs its verdict JSON directly without nested JSON escaping, pins system
+// policy in _meta.antigravity.systemPrompt.append when agy advertises it (separating
+// policy from the untrusted prompt under review), neutralizes agy slash commands, never
+// pollutes the idle session pool, and fails closed if agy attempts any tool call.
 func (a *AntigravityACP) JudgeSafeguard(ctx context.Context, system, prompt string) (string, error) {
 	if a.unguarded.Load() {
 		return "", unguardedError
@@ -26,7 +27,11 @@ func (a *AntigravityACP) JudgeSafeguard(ctx context.Context, system, prompt stri
 	}
 	defer c.release()
 
-	s, err := a.newSession(ctx, c, a.safeguardModel())
+	systemAppend := ""
+	if c.systemPromptAppend && system != "" {
+		systemAppend = agyCommands.text(system)
+	}
+	s, err := a.newSession(ctx, c, a.safeguardModel(), systemAppend)
 	if err != nil {
 		return "", err
 	}
@@ -37,7 +42,10 @@ func (a *AntigravityACP) JudgeSafeguard(ctx context.Context, system, prompt stri
 		raw         strings.Builder
 		sawToolCall bool
 	)
-	fullPrompt := agyCommands.text(system + "\n\n" + prompt)
+	fullPrompt := agyCommands.text(prompt)
+	if !s.systemPrompted {
+		fullPrompt = agyCommands.text(system + "\n\n" + prompt)
+	}
 	_, err = a.prompt(ctx, c, s, acpPiece{text: fullPrompt}, acp.SessionConfigValueId("low"), func(update acp.SessionUpdate) {
 		if update.ToolCall != nil {
 			mu.Lock()

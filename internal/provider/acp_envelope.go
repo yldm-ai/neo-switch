@@ -25,8 +25,14 @@ import (
 // acpPromptBudget is the most text NeoSwitch puts in one ACP prompt. agy keeps only the first 192,000 bytes of a prompt's text and replaces the rest with a "<truncated N bytes>" marker telling the model to read the full transcript with its own tools, which NeoSwitch refuses: the newest messages, which come last, would be lost without any error. The margin leaves room for the instructions that open every prompt.
 const acpPromptBudget = 150_000
 
-// acpAnswerInstructions open the prompt the model answers. agy keeps the start of a prompt, so they come first.
-const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one of the supplied Claude Code tools use {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}}. Escape literal backslashes inside JSON strings as \\\\. Do not use ACP tools, edit files, or run commands yourself.\n\n"
+// acpSystemPromptBudget is the most text NeoSwitch places in _meta.antigravity.systemPrompt.append on session/new. Verified on agy 1.5.17 to accept >=420 KB without the 192 KB user-prompt truncation; anything larger overflows cleanly into prompt pieces.
+const acpSystemPromptBudget = 380_000
+
+// acpAnswerInstructions open the prompt the model answers (or the session system prompt when agy advertises _meta.antigravity.systemPrompt.append). agy keeps the start of a prompt, so they come first.
+const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one or more of the supplied Claude Code tools use {\"tool_uses\":[{\"name\":\"tool name\",\"input\":{...}},...]} (include multiple entries to run independent tools in parallel, or {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}} for a single call, optionally with \"text\"). Escape literal backslashes inside JSON strings as \\\\. Do not use ACP tools, edit files, or run commands yourself.\n\n"
+
+// acpSystemUpdateNote tells the model that later continuation messages marked as updated system instructions or tool definitions supersede those pinned in session/new's systemPrompt.append.
+const acpSystemUpdateNote = "If a later message begins with \"Updated system instructions, replacing the earlier ones:\" or \"Updated Claude Code tool definitions, replacing the earlier ones:\", those updated definitions replace the initial ones below.\n\n"
 
 // acpPiece is prompt text with the images that belong to it.
 type acpPiece struct {
@@ -40,21 +46,67 @@ type promptRenderer struct {
 	images       int
 }
 
-// context renders the system instructions and the tool definitions, each "" when the request has none.
-func (r *promptRenderer) context(req translate.Request) (system, tools string) {
+// rawContext renders the un-neutralized system instructions and tool definitions, each "" when the request has none. Hashing the raw text keeps session change detection independent of agyCommands growing after session/new.
+func rawContext(req translate.Request) (system, tools string) {
 	if req.Config == nil {
 		return "", ""
 	}
 	if req.Config.SystemInstruction != nil {
-		p := r.builder()
-		p.writeParts(req.Config.SystemInstruction.Parts)
-		system = p.out.String()
+		var out strings.Builder
+		for _, part := range req.Config.SystemInstruction.Parts {
+			if part != nil && part.Text != "" {
+				out.WriteString(part.Text)
+				out.WriteString("\n")
+			}
+		}
+		system = out.String()
 	}
 	if len(req.Config.Tools) > 0 {
 		declarations, _ := json.Marshal(req.Config.Tools)
-		tools = agyCommands.json(string(declarations)) + "\n"
+		tools = string(declarations) + "\n"
 	}
 	return system, tools
+}
+
+// neutralizeContext escapes agy slash commands in system instructions and tool definitions.
+func neutralizeContext(rawSystem, rawTools string) (system, tools string) {
+	if rawSystem != "" {
+		system = agyCommands.text(rawSystem)
+	}
+	if rawTools != "" {
+		tools = agyCommands.json(rawTools)
+	}
+	return system, tools
+}
+
+// context renders the neutralized system instructions and tool definitions, each "" when the request has none.
+func (r *promptRenderer) context(req translate.Request) (system, tools string) {
+	rawSystem, rawTools := rawContext(req)
+	return neutralizeContext(rawSystem, rawTools)
+}
+
+// buildSystemPromptAppend packs acpAnswerInstructions plus system instructions and tool definitions into _meta.antigravity.systemPrompt.append up to acpSystemPromptBudget. Pieces that do not fit overflow into the returned slice so acpPrompts delivers them safely.
+func buildSystemPromptAppend(system, tools string) (string, []acpPiece) {
+	var out strings.Builder
+	out.WriteString(acpAnswerInstructions)
+	if system != "" || tools != "" {
+		out.WriteString(acpSystemUpdateNote)
+	}
+	var overflow []acpPiece
+	tryAppend := func(label, body string) {
+		if body == "" {
+			return
+		}
+		block := label + body + "\n"
+		if out.Len()+len(block) <= acpSystemPromptBudget {
+			out.WriteString(block)
+			return
+		}
+		overflow = append(overflow, acpPiece{text: block})
+	}
+	tryAppend("System instructions:\n", system)
+	tryAppend("Claude Code tool definitions for context only:\n", tools)
+	return out.String(), overflow
 }
 
 // contextPieces labels the system instructions and tool definitions for the prompt; updated marks them as replacing those a session read before.
@@ -87,7 +139,7 @@ func (r *promptRenderer) builder() *promptBuilder {
 	return &promptBuilder{renderer: r}
 }
 
-// acpPrompt renders the whole request as one prompt text, the way a new session reads it when it fits in one prompt. Images become ACP image blocks sent after the text when the agent accepts them (acceptImages); the text marks where each one belongs. Attachments ACP cannot carry are marked as omitted so the model knows they existed.
+// acpPrompt renders the whole request as one prompt text, used for token estimation and when agy does not advertise _meta.antigravity.systemPrompt.append. Images become ACP image blocks sent after the text when the agent accepts them (acceptImages); the text marks where each one belongs. Attachments ACP cannot carry are marked as omitted so the model knows they existed.
 func acpPrompt(req translate.Request, acceptImages bool) (string, []acp.ContentBlock) {
 	var out strings.Builder
 	var images []acp.ContentBlock
@@ -110,10 +162,20 @@ func conversationPieces(req translate.Request, acceptImages bool) []acpPiece {
 	return pieces
 }
 
-// acpPrompts packs pieces into the prompts that deliver them, none longer than acpPromptBudget. Each prompt but the last asks only for {"text":"ok"}; the last starts with the answer instructions and continued, which tells a session that already holds the conversation what the new text is. A piece too long for one prompt is split, at a line break where there is one.
-func acpPrompts(pieces []acpPiece, continued string) []acpPiece {
+// messagePieces renders only the conversation messages (used when system instructions and tool definitions were sent in _meta.antigravity.systemPrompt.append).
+func messagePieces(contents []*genai.Content, acceptImages bool) []acpPiece {
+	r := &promptRenderer{acceptImages: acceptImages}
+	pieces := make([]acpPiece, 0, len(contents))
+	for _, content := range contents {
+		pieces = append(pieces, r.entry(content))
+	}
+	return pieces
+}
+
+// acpPrompts packs pieces into the prompts that deliver them, none longer than acpPromptBudget. Each prompt but the last asks only for {"text":"ok"}; the last starts with instructions (empty when already pinned in systemPrompt.append) and continued, which tells a session that already holds the conversation what the new text is. A piece too long for one prompt is split, at a line break where there is one.
+func acpPrompts(pieces []acpPiece, instructions, continued string) []acpPiece {
 	const headroom = 1024
-	capacity := acpPromptBudget - len(acpAnswerInstructions) - len(continued) - headroom
+	capacity := acpPromptBudget - len(instructions) - len(continued) - headroom
 	var bins []acpPiece
 	var current acpPiece
 	flush := func() {
@@ -139,7 +201,7 @@ func acpPrompts(pieces []acpPiece, continued string) []acpPiece {
 	for i, bin := range bins {
 		head := fmt.Sprintf("This is part %d of %d of a Claude Code conversation. Do not answer it yet: reply with exactly {\"text\":\"ok\"}. The conversation continues in the next message.\n\n", i+1, len(bins))
 		if i == len(bins)-1 {
-			head = acpAnswerInstructions + continued
+			head = instructions + continued
 			if len(bins) > 1 {
 				head += fmt.Sprintf("This is the last part (%d of %d) of the conversation; the earlier parts are in the previous messages of this session.\n\n", len(bins), len(bins))
 			}
@@ -218,26 +280,73 @@ func (p *promptBuilder) attach(mimeType string, data []byte) {
 
 var errEmptyACPAnswer = errors.New("Antigravity ACP returned an empty response")
 
-// malformedToolUseError is an answer that starts a {"tool_use": ...} envelope but is not JSON even after repairJSONStrings, typically for an unescaped quote or a cut-off answer. Passing it on as text would end Claude Code's turn with the raw JSON on screen and no tool run, so the session is asked once to write it again (acpToolUseRepair).
+// malformedToolUseError is an answer that starts a {"tool_use": ...} or {"tool_uses": ...} envelope but is not valid JSON even after repairJSONStrings, typically for an unescaped quote or a cut-off answer. Passing it on as text would end Claude Code's turn with the raw JSON on screen and no tool run, so the session is asked once to write it again (acpToolUseRepair).
 type malformedToolUseError struct{ cause error }
 
 func (e *malformedToolUseError) Error() string {
 	return "Antigravity answered with a tool call that is not valid JSON: " + e.cause.Error()
 }
 
-// toolUseStart matches the start of an envelope with a tool call once the code fence is stripped: "tool_use" first, or after the "text" the prompt allows with it.
-var toolUseStart = regexp.MustCompile(`^\s*\{\s*(?:"text"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*)?"tool_use"\s*:`)
+// toolUseStart matches the start of an envelope with one or more tool calls once the code fence is stripped: "tool_use" / "tool_uses" first, or after the "text" the prompt allows with it.
+var toolUseStart = regexp.MustCompile(`^\s*\{\s*(?:"text"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*)?"tool_uses?"\s*:`)
+
+// acpToolCall is one tool invocation inside an envelope.
+type acpToolCall struct {
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
 
 // acpEnvelope is the JSON object the prompt asks for.
 type acpEnvelope struct {
-	Text    string `json:"text"`
-	ToolUse *struct {
-		Name  string          `json:"name"`
-		Input json.RawMessage `json:"input"`
-	} `json:"tool_use"`
+	Text     string          `json:"text"`
+	ToolUse  json.RawMessage `json:"tool_use"`
+	ToolUses json.RawMessage `json:"tool_uses"`
 }
 
-// parseAnswer parses the JSON envelope the prompt asks for, and reports whether the answer was exactly one envelope. An answer that is not JSON at all is passed through as text, since a readable answer beats an error. Models sometimes write more than one object, typically the same tool call twice; the objects are read in order, their texts joined, and only the first tool call is kept, because a second, different one comes from a model that lost track and running it could do something nobody asked for. Such an answer, and one that is not JSON, is not exact: the session that wrote it is not reused, since a model that sees its own malformed answer tends to repeat it.
+// decodeEnvelopeToolCalls extracts all tool calls declared on a single envelope, accepting both "tool_use" (single object or array) and "tool_uses" (array or single object). Empty or null fields yield no calls.
+func decodeEnvelopeToolCalls(envelope acpEnvelope) ([]acpToolCall, error) {
+	var out []acpToolCall
+	for _, raw := range []json.RawMessage{envelope.ToolUse, envelope.ToolUses} {
+		calls, err := decodeRawToolCalls(raw)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, calls...)
+	}
+	return out, nil
+}
+
+func decodeRawToolCalls(raw json.RawMessage) ([]acpToolCall, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	switch trimmed[0] {
+	case '{':
+		var call acpToolCall
+		if err := json.Unmarshal([]byte(trimmed), &call); err != nil {
+			return nil, err
+		}
+		return []acpToolCall{call}, nil
+	case '[':
+		var items []*acpToolCall
+		if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
+			return nil, err
+		}
+		calls := make([]acpToolCall, 0, len(items))
+		for _, item := range items {
+			if item == nil {
+				return nil, errors.New("null element in tool_uses")
+			}
+			calls = append(calls, *item)
+		}
+		return calls, nil
+	default:
+		return nil, fmt.Errorf("expected tool call object or array, got %q", trimmed)
+	}
+}
+
+// parseAnswer parses the JSON envelope the prompt asks for, and reports whether the answer was exactly one clean envelope. An answer that is not JSON at all is passed through as text, since a readable answer beats an error. Models sometimes write more than one top-level object, typically repeating a tool call; the objects are read in order, their texts joined, and only tool calls from the first object carrying calls are kept, because a second top-level object with a different call comes from a model that lost track. Exact duplicate calls within a single tool_uses array are also deduplicated and mark exact = false so the session is not reused with mismatched call counts. Multi-object or non-JSON answers are likewise not exact.
 func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, false, errEmptyACPAnswer
@@ -246,9 +355,10 @@ func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 	envelopes, complete, _ := decodeEnvelopes(clean)
 	if len(envelopes) == 0 {
 		// Models write literal newlines or tabs inside JSON strings, and backslashes that are no JSON escape (a regular expression's \. or \|, a Windows path); accept those before giving up on the envelope.
+		repaired := repairJSONStrings(clean)
 		var err error
-		envelopes, complete, err = decodeEnvelopes(repairJSONStrings(clean))
-		if len(envelopes) == 0 && toolUseStart.MatchString(clean) {
+		envelopes, complete, err = decodeEnvelopes(repaired)
+		if len(envelopes) == 0 && (toolUseStart.MatchString(clean) || toolUseStart.MatchString(repaired)) {
 			return nil, false, &malformedToolUseError{cause: err}
 		}
 	}
@@ -258,30 +368,48 @@ func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 	}
 	exact := complete && len(envelopes) == 1
 	var texts []string
-	var call *genai.Part
+	var calls []*genai.Part
 	for _, envelope := range envelopes {
 		if envelope.Text != "" && !slices.Contains(texts, envelope.Text) {
 			texts = append(texts, envelope.Text)
 		}
-		if envelope.ToolUse == nil {
+		rawCalls, err := decodeEnvelopeToolCalls(envelope)
+		if err != nil {
+			return nil, false, &malformedToolUseError{cause: err}
+		}
+		if len(rawCalls) == 0 {
 			continue
 		}
-		if strings.TrimSpace(envelope.ToolUse.Name) == "" {
-			return nil, false, errors.New("Antigravity ACP returned a tool call without a name")
-		}
-		var input map[string]any
-		if len(envelope.ToolUse.Input) > 0 && string(envelope.ToolUse.Input) != "null" {
-			if err := json.Unmarshal(envelope.ToolUse.Input, &input); err != nil {
-				return nil, false, fmt.Errorf("decode Antigravity ACP tool call: %w", err)
+		if len(calls) > 0 {
+			for _, dropped := range rawCalls {
+				var input map[string]any
+				if len(dropped.Input) > 0 && string(dropped.Input) != "null" {
+					_ = json.Unmarshal(dropped.Input, &input)
+					restoreBackslashLetters(input)
+				}
+				if !hasMatchingCall(calls, dropped.Name, input) {
+					acpLogger.Warn("Antigravity answered with tool calls in more than one JSON object; only the first object's calls are run", "first", calls[0].FunctionCall.Name, "dropped", dropped.Name)
+				}
 			}
-			restoreBackslashLetters(input)
-		}
-		if call == nil {
-			call = &genai.Part{FunctionCall: &genai.FunctionCall{ID: "acp_tool_" + rand.Text(), Name: envelope.ToolUse.Name, Args: input}}
 			continue
 		}
-		if call.FunctionCall.Name != envelope.ToolUse.Name || !sameJSON(call.FunctionCall.Args, input) {
-			acpLogger.Warn("Antigravity answered with more than one tool call; only the first is run", "first", call.FunctionCall.Name, "dropped", envelope.ToolUse.Name)
+		for _, tc := range rawCalls {
+			if strings.TrimSpace(tc.Name) == "" {
+				return nil, false, errors.New("Antigravity ACP returned a tool call without a name")
+			}
+			var input map[string]any
+			if len(tc.Input) > 0 && string(tc.Input) != "null" {
+				if err := json.Unmarshal(tc.Input, &input); err != nil {
+					return nil, false, fmt.Errorf("decode Antigravity ACP tool call: %w", err)
+				}
+				restoreBackslashLetters(input)
+			}
+			if hasMatchingCall(calls, tc.Name, input) {
+				exact = false
+				acpLogger.Warn("Antigravity repeated an identical tool call in tool_uses; duplicate dropped", "tool", tc.Name)
+				continue
+			}
+			calls = append(calls, &genai.Part{FunctionCall: &genai.FunctionCall{ID: "acp_tool_" + rand.Text(), Name: tc.Name, Args: input}})
 		}
 	}
 	if len(envelopes) > 1 {
@@ -291,13 +419,20 @@ func parseAnswer(raw string) ([]*genai.Part, bool, error) {
 	if len(texts) > 0 {
 		parts = append(parts, &genai.Part{Text: strings.Join(texts, "\n\n")})
 	}
-	if call != nil {
-		parts = append(parts, call)
-	}
+	parts = append(parts, calls...)
 	if len(parts) == 0 {
 		return nil, false, errors.New("Antigravity ACP returned neither text nor a tool call")
 	}
 	return parts, exact, nil
+}
+
+func hasMatchingCall(calls []*genai.Part, name string, input map[string]any) bool {
+	for _, existing := range calls {
+		if existing.FunctionCall != nil && existing.FunctionCall.Name == name && sameJSON(existing.FunctionCall.Args, input) {
+			return true
+		}
+	}
+	return false
 }
 
 // decodeEnvelopes reads the JSON objects at the start of s, one after another. complete is false when something other than another object follows them; err says what.
@@ -614,7 +749,7 @@ func decodeJSONStringBody(body string) (string, error) {
 	return text, err
 }
 
-// finish parses the complete answer and returns the parts not streamed yet: the rest of the text, if any, and a tool call. The whole answer is kept in answer, and exact reports whether it was one envelope.
+// finish parses the complete answer and returns the parts not streamed yet: the rest of the text, if any, and any tool calls. The whole answer is kept in answer, and exact reports whether it was one clean envelope.
 func (d *envelopeDecoder) finish(result acp.PromptResponse) ([]*genai.Part, error) {
 	parts, exact, err := acpAnswerParts(d.raw.String(), result)
 	d.answer, d.exact = parts, exact

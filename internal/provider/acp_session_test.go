@@ -223,6 +223,44 @@ func TestHistoryKeySurvivesTheRoundTripThroughClaudeCode(t *testing.T) {
 	}
 }
 
+func TestHistoryKeySurvivesParallelToolCallsRoundTripThroughClaudeCode(t *testing.T) {
+	parts, exact, err := parseAnswer(`{"text":"Reading both.","tool_uses":[{"name":"Read","input":{"file_path":"/tmp/a"}},{"name":"Read","input":{"file_path":"/tmp/b"}}]}`)
+	if err != nil || !exact {
+		t.Fatalf("parse: %v exact=%v", err, exact)
+	}
+	blocks, err := translate.Blocks(parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolIDs []string
+	for _, block := range blocks {
+		if block.Type == "tool_use" {
+			toolIDs = append(toolIDs, block.ID)
+		}
+	}
+	if len(toolIDs) != 2 || toolIDs[0] == toolIDs[1] {
+		t.Fatalf("expected 2 distinct tool_use IDs, got %v", toolIDs)
+	}
+	assistant, _ := json.Marshal(blocks)
+	// Return results out of order to verify translate.ToGemini reorders them cleanly.
+	user, _ := json.Marshal([]map[string]any{
+		{"type": "tool_result", "tool_use_id": toolIDs[1], "content": "body b"},
+		{"type": "tool_result", "tool_use_id": toolIDs[0], "content": "body a"},
+	})
+	echoed, err := translate.ToGemini(anthropic.MessagesRequest{Messages: []anthropic.Message{
+		{Role: "user", Content: json.RawMessage(`"read both"`)},
+		{Role: "assistant", Content: assistant},
+		{Role: "user", Content: user},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := []*genai.Content{genai.NewContentFromText("read both", genai.RoleUser), {Role: genai.RoleModel, Parts: parts}}
+	if historyKey(echoed.Contents[:2]) != historyKey(original) {
+		t.Fatal("parallel tool_uses conversation did not match the session key after round-trip")
+	}
+}
+
 func TestACPPromptsStayWithinWhatAgyReads(t *testing.T) {
 	pieces := []acpPiece{
 		{text: "System instructions:\n" + strings.Repeat("s", 40_000)},
@@ -230,7 +268,7 @@ func TestACPPromptsStayWithinWhatAgyReads(t *testing.T) {
 		{text: "MODEL:\nshort\n\n"},
 		{text: "USER:\n" + strings.Repeat("x", 200_000), images: []acp.ContentBlock{acp.ImageBlock("aGk=", "image/png")}},
 	}
-	prompts := acpPrompts(pieces, "")
+	prompts := acpPrompts(pieces, acpAnswerInstructions, "")
 	if len(prompts) < 3 {
 		t.Fatalf("expected several prompts, got %d", len(prompts))
 	}
@@ -268,8 +306,11 @@ func TestACPPromptsStayWithinWhatAgyReads(t *testing.T) {
 	if images != 1 || len(prompts[len(prompts)-1].images) != 1 {
 		t.Fatal("the image must travel with the end of its message")
 	}
-	if one := acpPrompts(pieces[2:3], ""); len(one) != 1 || one[0].text != acpAnswerInstructions+pieces[2].text {
+	if one := acpPrompts(pieces[2:3], acpAnswerInstructions, ""); len(one) != 1 || one[0].text != acpAnswerInstructions+pieces[2].text {
 		t.Fatalf("a short conversation must be one prompt: %#v", one)
+	}
+	if pinned := acpPrompts(pieces[2:3], "", ""); len(pinned) != 1 || pinned[0].text != pieces[2].text {
+		t.Fatalf("pinned system prompt must omit inline instructions: %#v", pinned)
 	}
 }
 

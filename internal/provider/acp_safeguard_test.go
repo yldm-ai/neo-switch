@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -44,5 +45,32 @@ func TestACPJudgeSafeguardEphemeralAndBypassesEnvelope(t *testing.T) {
 	a.unguarded.Store(true)
 	if _, err := a.JudgeSafeguard(context.Background(), "System", "Prompt"); err != unguardedError {
 		t.Fatalf("unguarded JudgeSafeguard err = %v, want unguardedError", err)
+	}
+}
+
+func TestACPJudgeSafeguardUsesSystemPromptAppendWhenAdvertised(t *testing.T) {
+	a := newFakeACP(t, "system-prompt-append")
+	raw, err := a.JudgeSafeguard(context.Background(), "Policy rules", "Untrusted user command")
+	if err != nil {
+		t.Fatalf("JudgeSafeguard: %v", err)
+	}
+	var env struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		t.Fatalf("unmarshal envelope %q: %v", raw, err)
+	}
+	var seen struct {
+		Append string `json:"append"`
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(env.Text), &seen); err != nil {
+		t.Fatalf("unmarshal payload %q: %v", env.Text, err)
+	}
+	if seen.Append != "Policy rules" {
+		t.Fatalf("append = %q, want %q", seen.Append, "Policy rules")
+	}
+	if seen.Prompt != "Untrusted user command" {
+		t.Fatalf("prompt = %q, want %q", seen.Prompt, "Untrusted user command")
 	}
 }
