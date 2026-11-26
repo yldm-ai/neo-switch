@@ -2,7 +2,7 @@ package anthropic
 
 import "encoding/json"
 
-// MessagesRequest is the subset of the Anthropic Messages request that NeoSwitch translates. Fields Claude Code sends but Gemini has no equivalent for (metadata, thinking, cache_control) are accepted and ignored at the JSON level; content blocks are validated strictly by the translator.
+// MessagesRequest is the subset of the Anthropic Messages request that NeoSwitch translates. Fields Claude Code sends but Gemini has no equivalent for (metadata, cache_control) are accepted and ignored at the JSON level; content blocks are validated strictly by the translator.
 type MessagesRequest struct {
 	Model       string          `json:"model"`
 	MaxTokens   int             `json:"max_tokens"`
@@ -15,6 +15,8 @@ type MessagesRequest struct {
 	TopP        *float64        `json:"top_p,omitempty"`
 	TopK        *int            `json:"top_k,omitempty"`
 	Stop        []string        `json:"stop_sequences,omitempty"`
+	// Thinking carries the client's thinking configuration (for example {"type":"disabled"} or {"type":"adaptive"}).
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 	// OutputConfig carries the effort Claude Code sends with every request (its /effort and --effort setting, "medium" by default).
 	OutputConfig *OutputConfig `json:"output_config,omitempty"`
 	// Safeguards carries Claude Code's server-side Auto Mode review requests (type "dangerous_tool_use").
@@ -41,6 +43,12 @@ type SafeguardVerdict struct {
 	Outcome     string `json:"outcome,omitempty"`
 	Explanation string `json:"explanation,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+}
+
+type ThinkingConfig struct {
+	Type         string `json:"type,omitempty"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Display      string `json:"display,omitempty"`
 }
 
 type OutputConfig struct {
@@ -74,7 +82,7 @@ type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
 	Thinking  string          `json:"thinking,omitempty"`
-	Signature string          `json:"signature,omitempty"`
+	Signature *string         `json:"signature,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`

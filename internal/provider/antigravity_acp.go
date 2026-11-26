@@ -200,8 +200,12 @@ func (a *AntigravityACP) Close() error {
 
 // Generate runs one request and returns the complete answer.
 func (a *AntigravityACP) Generate(ctx context.Context, req translate.Request) (*genai.GenerateContentResponse, error) {
-	var raw strings.Builder
-	x, err := a.run(ctx, req, func(text string) { raw.WriteString(text) })
+	var raw, thoughts strings.Builder
+	var onThought func(string)
+	if req.IncludeThoughts {
+		onThought = func(text string) { thoughts.WriteString(text) }
+	}
+	x, err := a.run(ctx, req, func(text string) { raw.WriteString(text) }, onThought)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +222,9 @@ func (a *AntigravityACP) Generate(ctx context.Context, req translate.Request) (*
 	x.end(parts, exact && err == nil)
 	if err != nil {
 		return nil, err
+	}
+	if thoughts.Len() > 0 {
+		parts = append([]*genai.Part{{Text: thoughts.String(), Thought: true}}, parts...)
 	}
 	resp := acpFinalResponse(parts, x.result)
 	if resp.UsageMetadata == nil {
@@ -236,14 +243,18 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 		firstUsage := &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: int32(estimate)}
 		// Ending the iteration early (Claude Code disconnected) cancels the prompt in agy.
 		ctx, cancel := context.WithCancel(ctx)
-		queue := newChunkQueue()
+		queue := newACPChunkQueue()
 		type outcome struct {
 			x   *acpExchange
 			err error
 		}
 		done := make(chan outcome, 1)
 		go func() {
-			x, err := a.run(ctx, req, queue.push)
+			var onThought func(string)
+			if req.IncludeThoughts {
+				onThought = queue.pushThought
+			}
+			x, err := a.run(ctx, req, queue.pushText, onThought)
 			done <- outcome{x, err}
 		}()
 		var (
@@ -269,7 +280,17 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 		var decoder envelopeDecoder
 		relay := func() bool {
 			for _, chunk := range queue.drain() {
-				delta := decoder.feed(chunk)
+				if chunk.thought {
+					if chunk.text == "" {
+						continue
+					}
+					if !yield(acpThoughtChunk(chunk.text, firstUsage), nil) {
+						return false
+					}
+					firstUsage = nil
+					continue
+				}
+				delta := decoder.feed(chunk.text)
 				if delta == "" {
 					continue
 				}
@@ -304,7 +325,7 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 					decoder = envelopeDecoder{mode: envelopeBuffered}
 					decoder.emitted.WriteString(streamed)
 					go func(x *acpExchange) {
-						err := a.repairToolUse(ctx, x, req, malformed, queue.push)
+						err := a.repairToolUse(ctx, x, req, malformed, queue.pushText)
 						if err != nil {
 							// repairToolUse already closed the session and released agy, as run does when it fails.
 							x = nil
@@ -349,8 +370,8 @@ func promptTextTokens(req translate.Request) int {
 // maxOverheadLearnTokens bounds the estimated size of a fresh request used to learn promptOverhead. With the slim neoswitch agent (~0.5k-1k overhead), a large prompt's character-count estimate error would swamp the real overhead.
 const maxOverheadLearnTokens = 4000
 
-// run sends the request to agy and passes each chunk of the answer to onText as it arrives. It continues the session holding the request's conversation when there is one, and otherwise opens a new session that reads the whole conversation, in several prompts when it is too long for one. The caller ends the returned exchange; when run fails, it has already closed the session and released agy. When ctx ends first, the prompt is cancelled in agy.
-func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText func(string)) (*acpExchange, error) {
+// run sends the request to agy and passes each chunk of the answer to onText (and, when onThought is non-nil, each reasoning chunk to onThought) as it arrives. It continues the session holding the request's conversation when there is one, and otherwise opens a new session that reads the whole conversation, in several prompts when it is too long for one. The caller ends the returned exchange; when run fails, it has already closed the session and released agy. When ctx ends first, the prompt is cancelled in agy.
+func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText, onThought func(string)) (*acpExchange, error) {
 	if a.unguarded.Load() {
 		return nil, unguardedError
 	}
@@ -398,11 +419,14 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText 
 		acpLogger.Warn("Antigravity conversation sent in several prompts, as it is too long for one", "prompts", len(prompts), "bytes", size, "new_session", fresh, "class", req.Origin.Class, "kind", req.Origin.Kind)
 	}
 	for i, prompt := range prompts {
-		sink := func(string) {}
+		var textSink, thoughtSink func(string)
 		if i == len(prompts)-1 {
-			sink = onText
+			textSink = onText
+			if req.IncludeThoughts {
+				thoughtSink = onThought
+			}
 		}
-		if x.result, err = a.prompt(ctx, c, x.session, prompt, acp.SessionConfigValueId(strings.ToLower(string(req.ThinkingLevel))), answerText(sink)); err != nil {
+		if x.result, err = a.prompt(ctx, c, x.session, prompt, acp.SessionConfigValueId(strings.ToLower(string(req.ThinkingLevel))), answerUpdates(textSink, thoughtSink)); err != nil {
 			c.closeSessions([]*acpSession{x.session})
 			c.release()
 			return nil, err
@@ -545,9 +569,17 @@ func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn, model, syst
 
 // answerText passes the text of agy's answer to onText.
 func answerText(onText func(string)) func(acp.SessionUpdate) {
+	return answerUpdates(onText, nil)
+}
+
+// answerUpdates passes answer text chunks to onText and internal reasoning chunks to onThought (when non-nil).
+func answerUpdates(onText, onThought func(string)) func(acp.SessionUpdate) {
 	return func(update acp.SessionUpdate) {
-		if chunk := update.AgentMessageChunk; chunk != nil && chunk.Content.Text != nil {
+		if chunk := update.AgentMessageChunk; chunk != nil && chunk.Content.Text != nil && onText != nil {
 			onText(chunk.Content.Text.Text)
+		}
+		if chunk := update.AgentThoughtChunk; chunk != nil && chunk.Content.Text != nil && onThought != nil {
+			onThought(chunk.Content.Text.Text)
 		}
 	}
 }
@@ -1087,7 +1119,7 @@ func (c *acpConn) WaitForTerminalExit(context.Context, acp.WaitForTerminalExitRe
 	return acp.WaitForTerminalExitResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalWaitForExit)
 }
 
-// chunkQueue hands answer chunks from the SDK's notification goroutine to the streaming request without ever blocking the former: a slow Claude Code connection must not stall updates for every other session.
+// chunkQueue hands string chunks from the SDK's notification goroutine to a streaming caller without ever blocking the former.
 type chunkQueue struct {
 	mu     sync.Mutex
 	chunks []string
@@ -1107,6 +1139,41 @@ func (q *chunkQueue) push(chunk string) {
 }
 
 func (q *chunkQueue) drain() []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	chunks := q.chunks
+	q.chunks = nil
+	return chunks
+}
+
+type acpChunk struct {
+	thought bool
+	text    string
+}
+
+// acpChunkQueue hands answer and reasoning chunks from the SDK's notification goroutine to the streaming request without ever blocking the former: a slow Claude Code connection must not stall updates for every other session.
+type acpChunkQueue struct {
+	mu     sync.Mutex
+	chunks []acpChunk
+	ready  chan struct{}
+}
+
+func newACPChunkQueue() *acpChunkQueue { return &acpChunkQueue{ready: make(chan struct{}, 1)} }
+
+func (q *acpChunkQueue) pushText(chunk string)    { q.push(acpChunk{text: chunk}) }
+func (q *acpChunkQueue) pushThought(chunk string) { q.push(acpChunk{thought: true, text: chunk}) }
+
+func (q *acpChunkQueue) push(chunk acpChunk) {
+	q.mu.Lock()
+	q.chunks = append(q.chunks, chunk)
+	q.mu.Unlock()
+	select {
+	case q.ready <- struct{}{}:
+	default:
+	}
+}
+
+func (q *acpChunkQueue) drain() []acpChunk {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	chunks := q.chunks

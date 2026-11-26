@@ -176,7 +176,7 @@ func claude(args []string) error {
 		_ = listener.Close()
 		return err
 	}
-	handler := server.NewHandler(server.Config{Backend: backend, Model: model, Token: token})
+	handler := server.NewHandler(server.Config{Backend: backend, Model: model, Token: token, ShowThinking: server.ShowThinkingFromEnv()})
 	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = httpServer.Serve(listener) }()
 	defer func() { _ = httpServer.Shutdown(context.Background()) }()
@@ -206,8 +206,13 @@ func serveWithListener(backend server.Backend, model, listen, token string) erro
 		return fmt.Errorf("listen on %s: %w", listen, err)
 	}
 	defer listener.Close()
-	httpServer := &http.Server{Handler: server.NewHandler(server.Config{Backend: backend, Model: model, Token: token}), ReadHeaderTimeout: 10 * time.Second}
-	fmt.Fprintf(os.Stderr, "NeoSwitch listening on http://%s (model %s)\n", listener.Addr(), model)
+	showThinking := server.ShowThinkingFromEnv()
+	httpServer := &http.Server{Handler: server.NewHandler(server.Config{Backend: backend, Model: model, Token: token, ShowThinking: showThinking}), ReadHeaderTimeout: 10 * time.Second}
+	if showThinking != server.ThinkingOff {
+		fmt.Fprintf(os.Stderr, "NeoSwitch listening on http://%s (model %s, show_thinking=%s)\n", listener.Addr(), model, showThinking)
+	} else {
+		fmt.Fprintf(os.Stderr, "NeoSwitch listening on http://%s (model %s)\n", listener.Addr(), model)
+	}
 	err = httpServer.Serve(listener)
 	if err == http.ErrServerClosed {
 		return nil
@@ -335,5 +340,6 @@ Environment:
   NEOSWITCH_SAFEGUARD  set to off/0/false to disable built-in Auto Mode safety checks
   NEOSWITCH_SAFEGUARD_MODEL  Antigravity model for Auto Mode safety checks (default: background model, or GEMINI_MODEL)
   NEOSWITCH_LISTEN     serve listen address (default: 127.0.0.1:8080)
-  NEOSWITCH_AUTH_TOKEN token for standalone serve, required off loopback`)
+  NEOSWITCH_AUTH_TOKEN token for standalone serve, required off loopback
+  NEOSWITCH_SHOW_THINKING  emit Anthropic thinking blocks: off (default), on (respects thinking.type=disabled), or always`)
 }
