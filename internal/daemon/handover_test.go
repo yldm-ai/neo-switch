@@ -196,12 +196,13 @@ func TestDaemonTakesThePortBackWhenTheSuccessorNeverListens(t *testing.T) {
 	if !takeoverInProgress(s.dir) {
 		t.Fatal("a frozen predecessor is not reported as a handover in progress")
 	}
+	// The handover is answered before the predecessor closes its listener, so the old listener may still answer for a moment: wait for the record, which is written only after the listener closed, before asking which daemon answers.
+	if !waitUntil(5*time.Second, func() bool { return TakeoverFailedRecently(s.dir, "v0.4.6") }) {
+		t.Fatal("the failed takeover was not recorded")
+	}
 	waitVersion(t, s, "v0.4.5")
 	if takeoverInProgress(s.dir) {
 		t.Fatal("the handover is still reported after the port was taken back")
-	}
-	if !TakeoverFailedRecently(s.dir, "v0.4.6") {
-		t.Fatal("the failed takeover was not recorded")
 	}
 	if _, err := AttachSession(s, Session{PID: 300, Project: "/p", ID: "later", OptIn: true}, nil); err != nil {
 		t.Fatalf("the daemon did not take its sessions back: %v", err)
