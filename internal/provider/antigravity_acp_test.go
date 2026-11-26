@@ -124,6 +124,8 @@ func runFakeACP(mode string) {
 		sessionPrompts = map[string]int{}
 		// models is the model each session selected.
 		models = map[string]string{}
+		// systemPrompts records _meta.antigravity.systemPrompt.append sent on session/new.
+		systemPrompts = map[string]string{}
 	)
 	update := func(sid, kind, text string) {
 		send(map[string]any{"method": "session/update", "params": map[string]any{
@@ -160,8 +162,12 @@ func runFakeACP(mode string) {
 		if mode == "refusal" {
 			stop = "refusal"
 		}
-		for _, r := range p.answer {
-			update(p.sid, "agent_message_chunk", string(r))
+		if mode == "system-prompt-append" {
+			update(p.sid, "agent_message_chunk", p.answer)
+		} else {
+			for _, r := range p.answer {
+				update(p.sid, "agent_message_chunk", string(r))
+			}
 		}
 		send(map[string]any{"id": p.id, "result": map[string]any{"stopReason": stop, "usage": usage}})
 	}
@@ -192,6 +198,13 @@ func runFakeACP(mode string) {
 					Terminal bool `json:"terminal"`
 				} `json:"auth"`
 			} `json:"clientCapabilities"`
+			Meta struct {
+				Antigravity struct {
+					SystemPrompt struct {
+						Append string `json:"append"`
+					} `json:"systemPrompt"`
+				} `json:"antigravity"`
+			} `json:"_meta"`
 			Prompt []struct {
 				Type     string `json:"type"`
 				MimeType string `json:"mimeType"`
@@ -227,9 +240,13 @@ func runFakeACP(mode string) {
 			if params.ClientCapabilities.Auth.Terminal && mode != "no-terminal-sign-in" {
 				methods = append(methods, map[string]any{"id": "terminal-login", "name": "Log in from the terminal", "type": "terminal", "args": []string{"--login"}, "env": map[string]string{"FAKE_SIGN_IN_ENV": "set"}})
 			}
+			agentCaps := map[string]any{"promptCapabilities": map[string]bool{"image": mode != "no-image"}}
+			if mode == "system-prompt-append" {
+				agentCaps["_meta"] = map[string]any{"antigravity": map[string]any{"systemPrompt": map[string]bool{"append": true}}}
+			}
 			reply(map[string]any{
 				"protocolVersion":   1,
-				"agentCapabilities": map[string]any{"promptCapabilities": map[string]bool{"image": mode != "no-image"}},
+				"agentCapabilities": agentCaps,
 				"authMethods":       methods,
 			})
 		case "authenticate":
@@ -247,7 +264,9 @@ func runFakeACP(mode string) {
 				continue
 			}
 			sessions++
-			result := map[string]any{"sessionId": "s" + strings.Repeat("x", sessions)}
+			sid := "s" + strings.Repeat("x", sessions)
+			systemPrompts[sid] = params.Meta.Antigravity.SystemPrompt.Append
+			result := map[string]any{"sessionId": sid}
 			var options []any
 			switch mode {
 			case "no-models":
@@ -276,6 +295,16 @@ func runFakeACP(mode string) {
 				result["configOptions"] = options
 			}
 			reply(result)
+			if mode == "system-prompt-append" {
+				// Like agy, advertise a new slash command after session/new so tests can verify rawContext hashing avoids spurious Turn-2 resends.
+				send(map[string]any{"method": "session/update", "params": map[string]any{
+					"sessionId": sid,
+					"update": map[string]any{
+						"sessionUpdate":     "available_commands_update",
+						"availableCommands": []any{map[string]string{"name": "probe-cmd", "description": "test command"}},
+					},
+				}})
+			}
 		case "session/set_config_option":
 			var option struct {
 				SessionID string `json:"sessionId"`
@@ -404,6 +433,21 @@ func runFakeACP(mode string) {
 				p.answer = streamEnvelope
 			case "tool":
 				p.answer = `{"tool_use":{"name":"Read","input":{"file_path":"a.go"}}}`
+			case "tool-parallel":
+				p.answer = `{"text":"Checking.","tool_uses":[{"name":"Read","input":{"file_path":"a.go"}},{"name":"Read","input":{"file_path":"b.go"}}]}`
+			case "system-prompt-append":
+				if strings.Contains(text, "Do not answer it yet") {
+					p.answer = `{"text":"ok"}`
+				} else {
+					payload, _ := json.Marshal(map[string]any{
+						"session": p.sid,
+						"prompts": sessionPrompts[p.sid],
+						"append":  systemPrompts[p.sid],
+						"prompt":  text,
+					})
+					env, _ := json.Marshal(map[string]string{"text": string(payload)})
+					p.answer = string(env)
+				}
 			case "tool-malformed", "tool-malformed-once", "text-tool-malformed-once":
 				// A tool call with unescaped quotes; asked to write it again, the -once fakes answer with the session and its prompt count. The text- fake writes text before the call.
 				head := `{`
@@ -427,7 +471,7 @@ var fakeModels = []string{"gemini-b-pro", DefaultModel, "gemini-a-flash"}
 
 func newFakeACP(t *testing.T, mode string) *AntigravityACP {
 	t.Setenv(fakeACPEnv, mode)
-	a := &AntigravityACP{path: os.Args[0], agent: "bare-llm", model: DefaultModel, cwd: t.TempDir()}
+	a := &AntigravityACP{path: os.Args[0], agent: defaultACPAgent, model: DefaultModel, cwd: t.TempDir()}
 	t.Cleanup(func() { _ = a.Close() })
 	return a
 }
@@ -789,9 +833,146 @@ func TestACPListModelsFailsWithoutModelOption(t *testing.T) {
 }
 
 func TestACPListModelsReportsStartFailure(t *testing.T) {
-	a := &AntigravityACP{path: t.TempDir() + "/missing-agy", agent: "bare-llm", model: DefaultModel, cwd: t.TempDir()}
+	a := &AntigravityACP{path: t.TempDir() + "/missing-agy", agent: defaultACPAgent, model: DefaultModel, cwd: t.TempDir()}
 	if _, err := a.ListModels(context.Background()); err == nil || !strings.Contains(err.Error(), "start Antigravity ACP") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSupportsSystemPromptAppend(t *testing.T) {
+	if supportsSystemPromptAppend(acp.InitializeResponse{}) {
+		t.Fatal("empty initialize response must not advertise systemPrompt.append")
+	}
+	capMeta, err := acp.NewMeta(map[string]any{"antigravity": map[string]any{"systemPrompt": map[string]bool{"append": true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !supportsSystemPromptAppend(acp.InitializeResponse{AgentCapabilities: acp.AgentCapabilities{Meta: capMeta}}) {
+		t.Fatal("agentCapabilities._meta.antigravity.systemPrompt.append=true not detected")
+	}
+	if !supportsSystemPromptAppend(acp.InitializeResponse{Meta: capMeta}) {
+		t.Fatal("top-level _meta.antigravity.systemPrompt.append=true not detected")
+	}
+	falseMeta, _ := acp.NewMeta(map[string]any{"antigravity": map[string]any{"systemPrompt": map[string]bool{"append": false}}})
+	if supportsSystemPromptAppend(acp.InitializeResponse{AgentCapabilities: acp.AgentCapabilities{Meta: falseMeta}}) {
+		t.Fatal("append=false must return false")
+	}
+}
+
+func TestACPSystemPromptAppendAndContinuation(t *testing.T) {
+	a := newFakeACP(t, "system-prompt-append")
+	type seen struct {
+		Session string `json:"session"`
+		Prompts int    `json:"prompts"`
+		Append  string `json:"append"`
+		Prompt  string `json:"prompt"`
+	}
+	decode := func(t *testing.T, text string) seen {
+		t.Helper()
+		var s seen
+		if err := json.Unmarshal([]byte(text), &s); err != nil {
+			t.Fatalf("unmarshal %q: %v", text, err)
+		}
+		return s
+	}
+	// System + tools (~100 KB) + user message (~80 KB) exceeds acpPromptBudget (150 KB), yet fits in one prompt once system + tools move to systemPrompt.append.
+	req1 := textRequest(strings.Repeat("u", 80_000))
+	req1.Config = &genai.GenerateContentConfig{
+		SystemInstruction: genai.NewContentFromText("Use /probe-turn2-cmd when needed.", genai.RoleUser),
+		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{
+			{Name: "Read", Description: strings.Repeat("t", 100_000)},
+		}}},
+	}
+	resp1, err := a.Generate(context.Background(), req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text1 := generatedText(t, resp1)
+	s1 := decode(t, text1)
+	if s1.Prompts != 1 {
+		t.Fatalf("expected 1 prompt with systemPrompt.append, got %d", s1.Prompts)
+	}
+	if !strings.HasPrefix(s1.Append, acpAnswerInstructions+acpSystemUpdateNote) {
+		t.Fatalf("append missing instructions/update note: %q", s1.Append[:min(len(s1.Append), 120)])
+	}
+	if !strings.Contains(s1.Append, "Use /probe-turn2-cmd when needed.") || !strings.Contains(s1.Append, "\"Read\"") {
+		t.Fatal("append missing system instructions or tool definitions")
+	}
+	for _, inline := range []string{acpAnswerInstructions, "System instructions:", "Claude Code tool definitions"} {
+		if strings.Contains(s1.Prompt, inline) {
+			t.Fatalf("prompt must not duplicate %q when pinned in systemPrompt.append", inline)
+		}
+	}
+	// Large fresh request (> maxOverheadLearnTokens) must not poison promptOverhead.
+	if got := a.promptOverhead.Load(); got != 0 {
+		t.Fatalf("large fresh request must not update promptOverhead, got %d", got)
+	}
+
+	// Simulate available_commands_update expanding agyCommands after session/new; rawContext hashing must prevent a spurious Turn-2 system resend.
+	agyCommands.add([]string{"probe-turn2-cmd"})
+	req2 := continueWith(req1, text1, "follow up")
+	resp2, err := a.Generate(context.Background(), req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text2 := generatedText(t, resp2)
+	s2 := decode(t, text2)
+	if s2.Session != s1.Session || s2.Prompts != 2 {
+		t.Fatalf("Turn 2 did not continue session: %+v after %+v", s2, s1)
+	}
+	for _, forbidden := range []string{acpAnswerInstructions, "Updated system instructions", "Updated Claude Code tool definitions"} {
+		if strings.Contains(s2.Prompt, forbidden) {
+			t.Fatalf("Turn 2 must not resend %q", forbidden)
+		}
+	}
+
+	// Turn 3: adding a tool sends only the updated tool definitions delta.
+	req3 := continueWith(req2, text2, "with grep")
+	req3.Config = &genai.GenerateContentConfig{
+		SystemInstruction: req1.Config.SystemInstruction,
+		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{
+			{Name: "Read", Description: strings.Repeat("t", 100_000)},
+			{Name: "Grep", Description: "search"},
+		}}},
+	}
+	resp3, err := a.Generate(context.Background(), req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3 := decode(t, generatedText(t, resp3))
+	if s3.Session != s1.Session || s3.Prompts != 3 {
+		t.Fatalf("Turn 3 did not continue session: %+v", s3)
+	}
+	if !strings.Contains(s3.Prompt, "Updated Claude Code tool definitions") || strings.Contains(s3.Prompt, "Updated system instructions") {
+		t.Fatalf("Turn 3 expected only tools delta, got prompt prefix %q", s3.Prompt[:min(len(s3.Prompt), 200)])
+	}
+}
+
+func TestACPStreamDeliversParallelToolCalls(t *testing.T) {
+	a := newFakeACP(t, "tool-parallel")
+	chunks := collectStream(t, a, textRequest("read both"))
+	var streamed strings.Builder
+	var calls []*genai.FunctionCall
+	for i, chunk := range chunks {
+		last := i == len(chunks)-1
+		for _, part := range chunk.Candidates[0].Content.Parts {
+			streamed.WriteString(part.Text)
+			if part.FunctionCall != nil {
+				if !last {
+					t.Fatalf("tool call delivered before final chunk %d", i)
+				}
+				calls = append(calls, part.FunctionCall)
+			}
+		}
+	}
+	if streamed.String() != "Checking." {
+		t.Fatalf("streamed %q, want %q", streamed.String(), "Checking.")
+	}
+	if len(calls) != 2 || calls[0].Args["file_path"] != "a.go" || calls[1].Args["file_path"] != "b.go" {
+		t.Fatalf("calls = %#v", calls)
+	}
+	if calls[0].ID == "" || calls[1].ID == "" || calls[0].ID == calls[1].ID {
+		t.Fatalf("expected distinct IDs, got %q and %q", calls[0].ID, calls[1].ID)
 	}
 }
 

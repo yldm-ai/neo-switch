@@ -106,6 +106,11 @@ func TestInstallToolGuardKeepsWhatIsCurrent(t *testing.T) {
 	}
 	hooks := filepath.Join(workspace, ".agents", "hooks.json")
 	before, _ := os.Stat(hooks)
+	agentFile := filepath.Join(workspace, ".agents", "agents", defaultACPAgent+".md")
+	agentBefore, err := os.Stat(agentFile)
+	if err != nil {
+		t.Fatalf("slim agent file: %v", err)
+	}
 	// An old hook binary of another version, and an old session's records.
 	old := time.Now().Add(-31 * 24 * time.Hour)
 	stale := filepath.Join(bin, "neoswitch-hook-0000000000000000")
@@ -125,6 +130,24 @@ func TestInstallToolGuardKeepsWhatIsCurrent(t *testing.T) {
 	}
 	if after, _ := os.Stat(hooks); !after.ModTime().Equal(before.ModTime()) {
 		t.Fatal("an unchanged hooks.json must not be rewritten under a running agy")
+	}
+	if agentAfter, _ := os.Stat(agentFile); !agentAfter.ModTime().Equal(agentBefore.ModTime()) {
+		t.Fatal("an unchanged slim agent definition must not be rewritten under a running agy")
+	}
+	agentData, err := os.ReadFile(agentFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentText := string(agentData)
+	for _, want := range []string{"name: neoswitch", "excludeDefaultComponents: true", "inheritCustomizations: true", "- search_web"} {
+		if !strings.Contains(agentText, want) {
+			t.Fatalf("slim agent definition lacks %q:\n%s", want, agentText)
+		}
+	}
+	for _, forbid := range []string{"inheritCustomizations: false", "mainAgent:"} {
+		if strings.Contains(agentText, forbid) {
+			t.Fatalf("slim agent definition must not contain %q:\n%s", forbid, agentText)
+		}
 	}
 	for _, path := range []string{stale, record} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -183,5 +206,16 @@ func TestAntigravityRunsOutsideTheProject(t *testing.T) {
 	}
 	if a.cwd != AntigravityWorkspace(state) {
 		t.Fatalf("agy runs in %s", a.cwd)
+	}
+	if a.agent != defaultACPAgent {
+		t.Fatalf("default agent %q, want %q", a.agent, defaultACPAgent)
+	}
+	t.Setenv("ANTIGRAVITY_ACP_AGENT", "custom-agent")
+	custom, err := NewAntigravityACPFromEnv(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.agent != "custom-agent" {
+		t.Fatalf("override agent %q, want custom-agent", custom.agent)
 	}
 }

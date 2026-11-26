@@ -11,12 +11,12 @@ Claude Code still runs the session, permissions, tool execution, MCP servers, sk
 | Capability | Gemini API / Vertex AI | Antigravity OAuth (ACP) |
 |---|---|---|
 | Streaming text | Supported | Supported |
-| Tool calls, including parallel calls | Native Gemini function calling | Partial: the model writes Claude tool-call JSON, which arrives whole instead of streamed |
+| Tool calls, including parallel calls | Native Gemini function calling | Supported via JSON envelope (`tool_uses` / `tool_use`); calls arrive whole instead of streamed |
 | Multi-turn tool use and `/resume` | Supported; thought signatures are carried in the tool IDs | Supported |
 | Images | Supported | Supported when `agy` offers image input |
 | PDFs | Supported | Not supported; the model is told a file was omitted |
 | `/effort` | Sent as Gemini's thinking level; not verified against the live API, and dropped if the model rejects it | Mapped to `agy`'s thought level |
-| Token usage and `count_tokens` | Reported; `count_tokens` is estimated on the Developer API | Reported, including about 14k tokens of `agy` instructions added to every prompt |
+| Token usage and `count_tokens` | Reported; `count_tokens` is estimated on the Developer API | Reported, including under 1k tokens of slim `neoswitch` agent overhead |
 | Gemini 4 Neon access | Depends on your key or project; check with `neoswitch doctor` | Verified with a signed-in `agy` |
 
 Not supported on either path: server tools such as code execution, URL image and document sources, and Claude thinking blocks. Claude Code's WebSearch works on the Antigravity route, which searches with Google ([antigravity.md](antigravity.md#web-search)), and not with a Gemini API key. `cache_control` and `context_management` are ignored. Claude Code's `/model` choice does not change the model that answers: every Google route uses `GEMINI_MODEL`, which defaults to `gemini-4-neon`. NeoSwitch never falls back to another model silently.

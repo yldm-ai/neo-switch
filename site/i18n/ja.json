@@ -91,7 +91,7 @@
   "effort_acp": "<code>agy</code> の思考レベルに対応付け",
   "row_tokens": "トークン使用量と <code>count_tokens</code>",
   "tokens_api": "報告される。Developer API では推定値",
-  "tokens_acp": "報告される。約 14k トークンの <code>agy</code> の指示を含む",
+  "tokens_acp": "報告される。1k トークン未満の <code>agy</code> エージェントオーバーヘッドを含む",
   "compat_note": "どちらの経路でも非対応：コード実行などのサーバーツール、URL 指定の画像やドキュメントのソース、Claude の thinking ブロック。Claude Code の WebSearch は Google でのサインイン（Antigravity）なら Google で検索して動作しますが、Gemini API キーでは動作しません。完全な契約は <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a> にあります。",
   "cmds_title": "プラグインコマンド",
   "cmds_sub": "ルーティングの変更は新しいセッションに適用されます。現在のセッションは既存の接続を維持します。",

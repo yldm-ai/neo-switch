@@ -91,7 +91,7 @@
   "effort_acp": "對應到 <code>agy</code> 的思考層級",
   "row_tokens": "token 用量與 <code>count_tokens</code>",
   "tokens_api": "會回報；在 Developer API 上為估計值",
-  "tokens_acp": "會回報，包含約 14k token 的 <code>agy</code> 指示",
+  "tokens_acp": "會回報，包含不到 1k token 的 <code>agy</code> 代理開銷",
   "compat_note": "兩種方式都不支援：程式碼執行等伺服器端工具，URL 形式的圖片與文件來源，以及 Claude thinking 區塊。Claude Code 的 WebSearch 在以 Google 登入（Antigravity）時可用，由 Google 搜尋；使用 Gemini API 金鑰時無法使用。完整的端點約定見 <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>。",
   "cmds_title": "外掛指令",
   "cmds_sub": "變更路由後對新的工作階段生效；目前的工作階段會維持原本的連線。",

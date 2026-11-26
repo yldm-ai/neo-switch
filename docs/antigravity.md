@@ -39,7 +39,7 @@ The probe launches the official CLI in headless JSON mode with a fixed, non-sens
 
 The ACP route uses `agy` as the model-side agent process. NeoSwitch sends the translated Claude request through an ACP session, selects `gemini-4-neon` (or `GEMINI_MODEL`), and translates the returned text or Claude tool call back to the local Anthropic-compatible proxy. OAuth credentials remain owned by `agy`. `agy` offers each account the models of its plan, listed in every new session. When the plan lacks the model, NeoSwitch answers with a message that says so and names the models the plan has, which Claude Code shows as it is instead of retrying; `/neoswitch:login` checks the same list and then leaves the project on Claude.
 
-`agy` is a full coding agent with its own tools. The `bare-llm` agent NeoSwitch uses reports `read_file`, `write_file`, `edit_file`, `run_command`, `manage_task`, `search_web`, `ask_question`, `schedule`, `define_subagent`, `invoke_subagent`, `manage_subagents`, `send_message`, `run_workflow` and `swarm`.
+`agy` is a full coding agent with its own built-in tools (`read_file`, `write_file`, `edit_file`, `run_command`, `manage_task`, `search_web`, `ask_question`, `schedule`, `define_subagent`, `invoke_subagent`, `manage_subagents`, `send_message`, `run_workflow` and `swarm`).
 
 Refusing `agy`'s permission requests is not enough to keep tools in Claude Code: most of those tools never ask. Verified without a guard:
 
@@ -47,10 +47,11 @@ Refusing `agy`'s permission requests is not enough to keep tools in Claude Code:
 - `schedule` started a background task.
 - `define_subagent` and `send_message` ran.
 
-So `agy` runs under a tool guard:
+So `agy` runs under a slim custom agent and a tool guard:
 
 - **A folder of NeoSwitch's own:** `agy` runs in `agy-workspace` in NeoSwitch's state folder, never in the user's project. A project's `.agents` rules, skills, MCP servers and hooks therefore do not load into it either.
-- **A hook on every tool:** that folder's `.agents/hooks.json` runs a `PreToolUse` hook before every tool. The hook is a copy of the NeoSwitch binary named by its content and called by a relative path. It allows `search_web` and denies everything else.
+- **A slim custom agent (`neoswitch`):** NeoSwitch installs `.agents/agents/neoswitch.md` (`excludeDefaultComponents: true`, `inheritCustomizations: true`, `tools: [search_web]`) and runs `agy acp --agent neoswitch` (overridable via `ANTIGRAVITY_ACP_AGENT`). This removes `agy`'s ~14k-token coding-agent prompt and built-in tools other than `search_web` at declaration time while keeping `.agents/hooks.json` active.
+- **A hook on every tool (defense in depth):** that folder's `.agents/hooks.json` runs a `PreToolUse` hook before every tool, even on an older `agy` that ignores custom agents. The hook is a copy of the NeoSwitch binary named by its content and called by a relative path. It allows `search_web` and denies everything else.
 - **Verified with `agy`:**
   - `invoke_subagent`, `schedule` and `read_file` are denied.
   - A hook that fails, prints something else or times out blocks the tool.
@@ -90,7 +91,7 @@ Images, including screenshots returned by Claude Code tools, are sent as ACP ima
 
 One `agy acp` process serves the daemon. `agy` runs sessions concurrently, so subagents, background requests and several Claude Code sessions do not wait for each other. Text answers stream to Claude Code as `agy` generates them; tool calls arrive whole.
 
-`agy` reads only the first 192,000 bytes of a prompt. It replaces the rest with a `<truncated N bytes>` marker and tells the model to read the full transcript with its own tools, which NeoSwitch refuses. A Claude Code conversation passes that size after a few file reads, and its newest messages come last. So NeoSwitch never sends `agy` a prompt over 150,000 bytes:
+`agy` reads only the first 192,000 bytes of a prompt. It replaces the rest with a `<truncated N bytes>` marker and tells the model to read the full transcript with its own tools, which NeoSwitch refuses. A Claude Code conversation passes that size after a few file reads, and its newest messages come last. So NeoSwitch pins the envelope instructions, Claude Code system prompt, and tool definitions in `_meta.antigravity.systemPrompt.append` on `session/new` when `agy` advertises it (up to 380,000 bytes, overflowing safely into prompt pieces if larger), keeps conversation messages in `session/prompt`, and never sends `agy` a prompt over 150,000 bytes:
 
 - **After an answer:** the ACP session stays open for up to 30 minutes, up to 16 sessions per `agy`, filed under the conversation it holds.
 - **Next request of the same conversation:** it sends only the new message, plus the system instructions or tool definitions when they changed. The session keeps the rest, up to `agy`'s context window of about a million tokens.
@@ -102,9 +103,9 @@ One `agy acp` process serves the daemon. `agy` runs sessions concurrently, so su
   - **Closing order:** past 16 idle sessions, sessions of main threads are closed last.
   - **Older Claude Code:** without the headers, any request may continue a session holding its conversation, so a background request can take the main thread's session.
 - **Matching a conversation:** a tool call is matched by its ID and name, not its input, because Claude Code sends back the input as its tool read it. Its Edit tool adds `"replace_all": false`, for one; matching on the input lost the session, and read the whole conversation again, after every edit.
-- **Not reused:** a session whose answer Claude Code did not receive, that answered with something other than exactly one JSON object, or that had to write a tool call again.
+- **Not reused:** a session whose answer Claude Code did not receive, that answered with something other than exactly one JSON object, had duplicate calls dropped from `tool_uses`, or had to write a tool call again.
 
-When the model writes more than one JSON object, typically the same tool call twice, NeoSwitch merges the texts and runs only the first tool call.
+To run independent tools in parallel within a single turn, the envelope supports `{"tool_uses":[{"name":"...","input":{...}},...]}` alongside singular `{"tool_use":{...}}` (optionally with `"text"`). Exact duplicates within `tool_uses` are deduplicated. When the model writes more than one top-level JSON object, typically repeating a tool call, NeoSwitch merges the texts and runs only the first object's tool calls.
 
 The model writes JSON by hand, and gets string escapes wrong when a tool call holds a regular expression or a shell command. NeoSwitch repairs what it can tell apart: a backslash that starts no JSON escape (`\|`, `\.`, `\d`, `C:\users`) is kept as a backslash, a `\b` in a tool call's input stays the two characters the model meant rather than a backspace, and so does a `\f` in a command, where Claude Code would refuse a form feed (a file's real form feeds are kept). A tool call that is still not JSON, typically for an unescaped quote, is not passed on as text, which would end the turn with raw JSON on screen: the same session is asked once to write it again, and if that fails too, Claude Code retries the request. A tool call cut off by the output limit is passed on as text, since writing it again would hit the same limit.
 
@@ -120,7 +121,7 @@ When Google refuses a request, Claude Code shows the reason in `agy`'s own words
 
 Claude Code's effort setting (`/effort`, `--effort`, `medium` by default) selects `agy`'s thought level for each request: `low`, `medium`, `high` and `xhigh` map directly and `max` uses `xhigh`. The thought level dominates the wait before the first token, so `low` answers simple questions noticeably faster. When `agy` does not offer a level, the request runs at `agy`'s default.
 
-Answers report the input and output tokens `agy` bills, so Claude Code's context usage and automatic compaction see real numbers. ACP's input tokens leave out those read from cache, which in a continued session are most of the conversation. NeoSwitch adds them back and reports them as cache reads. `agy` adds its own agent instructions (about 14k tokens) to every prompt. That overhead is included in the reported usage, and `count_tokens` adds it to its estimate once the first answer has reported it.
+Answers report the input and output tokens `agy` bills, so Claude Code's context usage and automatic compaction see real numbers. ACP's input tokens leave out those read from cache, which in a continued session are most of the conversation. NeoSwitch adds them back and reports them as cache reads. With NeoSwitch's slim `neoswitch` agent, `agy` adds under 1k tokens of its own agent overhead (down from ~14k tokens with `agy`'s default agent). That overhead is included in the reported usage, and `count_tokens` learns it from small fresh answers.
 
 Each request is bounded by the proxy's 10-minute upstream timeout. When the timeout expires or Claude Code disconnects, NeoSwitch cancels that session in `agy` and leaves the others running. If `agy` produced no output at all for a request that timed out, it is treated as stuck and restarted for the next request.
 

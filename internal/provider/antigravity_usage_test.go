@@ -51,7 +51,7 @@ func fakeUsageProvider(t *testing.T, mode string) *AntigravityACP {
 	t.Setenv(fakeACPEnv, mode)
 	return &AntigravityACP{
 		path:  os.Args[0],
-		agent: "bare-llm",
+		agent: defaultACPAgent,
 		model: DefaultModel,
 		cwd:   filepath.Join(t.TempDir(), "agy-workspace"),
 	}

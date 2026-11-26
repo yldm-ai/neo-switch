@@ -91,7 +91,7 @@
   "effort_acp": "Se asigna al nivel de razonamiento de <code>agy</code>",
   "row_tokens": "Uso de tokens, <code>count_tokens</code>",
   "tokens_api": "Se informa; estimado en la Developer API",
-  "tokens_acp": "Se informa, incluidos unos 14k tokens de instrucciones de <code>agy</code>",
+  "tokens_acp": "Se informa, incluidos &lt;1k tokens de sobrecarga del agente <code>agy</code>",
   "compat_note": "No soportado en ninguna de las dos vías: herramientas de servidor como la ejecución de código, fuentes de imagen y documento por URL, y los bloques de thinking de Claude. WebSearch de Claude Code funciona al iniciar sesión con Google (Antigravity), que busca con Google; no funciona con una clave de la API de Gemini. El contrato completo está en <a href=\"https://github.com/yldm-ai/neo-switch/blob/main/docs/protocol-contract.md\">docs/protocol-contract.md</a>.",
   "cmds_title": "Comandos del plugin",
   "cmds_sub": "Los cambios de enrutamiento se aplican a las nuevas sesiones; la sesión actual mantiene su conexión.",

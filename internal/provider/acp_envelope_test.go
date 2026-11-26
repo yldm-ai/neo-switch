@@ -225,3 +225,139 @@ func TestACPRewritesAMalformedToolCallAfterText(t *testing.T) {
 		}
 	})
 }
+
+func TestParseAnswerParallelToolUses(t *testing.T) {
+	t.Run("parallel calls with backslash repair", func(t *testing.T) {
+		parts, exact, err := parseAnswer(`{"tool_uses":[{"name":"Read","input":{"file_path":"a.go"}},{"name":"Grep","input":{"pattern":"foo\.bar\b"}}]}`)
+		if err != nil || !exact {
+			t.Fatalf("err=%v exact=%v", err, exact)
+		}
+		if len(parts) != 2 || parts[0].FunctionCall == nil || parts[1].FunctionCall == nil {
+			t.Fatalf("parts=%#v", parts)
+		}
+		c0, c1 := parts[0].FunctionCall, parts[1].FunctionCall
+		if c0.ID == "" || c1.ID == "" || c0.ID == c1.ID {
+			t.Fatalf("expected distinct non-empty IDs: %q %q", c0.ID, c1.ID)
+		}
+		if c0.Name != "Read" || c0.Args["file_path"] != "a.go" {
+			t.Fatalf("call 0: %#v", c0)
+		}
+		if c1.Name != "Grep" || c1.Args["pattern"] != `foo\.bar\b` {
+			t.Fatalf("call 1: %#v", c1)
+		}
+	})
+
+	t.Run("text plus parallel calls", func(t *testing.T) {
+		parts, exact, err := parseAnswer(`{"text":"Checking both.","tool_uses":[{"name":"Read","input":{"file_path":"a.go"}},{"name":"Read","input":{"file_path":"b.go"}}]}`)
+		if err != nil || !exact || len(parts) != 3 {
+			t.Fatalf("err=%v exact=%v parts=%#v", err, exact, parts)
+		}
+		if parts[0].Text != "Checking both." || parts[1].FunctionCall.Args["file_path"] != "a.go" || parts[2].FunctionCall.Args["file_path"] != "b.go" {
+			t.Fatalf("unexpected parts: %#v", parts)
+		}
+	})
+
+	t.Run("empty tool_uses with text", func(t *testing.T) {
+		parts, exact, err := parseAnswer(`{"text":"Nothing to run.","tool_uses":[]}`)
+		if err != nil || !exact || len(parts) != 1 || parts[0].Text != "Nothing to run." {
+			t.Fatalf("err=%v exact=%v parts=%#v", err, exact, parts)
+		}
+	})
+
+	t.Run("tool_use and tool_uses combined", func(t *testing.T) {
+		parts, exact, err := parseAnswer(`{"tool_use":{"name":"Read","input":{"file_path":"a.go"}},"tool_uses":[{"name":"Read","input":{"file_path":"b.go"}}]}`)
+		if err != nil || !exact || len(parts) != 2 {
+			t.Fatalf("err=%v exact=%v parts=%#v", err, exact, parts)
+		}
+		if parts[0].FunctionCall.Args["file_path"] != "a.go" || parts[1].FunctionCall.Args["file_path"] != "b.go" {
+			t.Fatalf("unexpected calls: %#v", parts)
+		}
+	})
+
+	t.Run("duplicate call in tool_uses is dropped and marks exact false", func(t *testing.T) {
+		parts, exact, err := parseAnswer(`{"tool_uses":[{"name":"Read","input":{"file_path":"a.go","limit":10}},{"name":"Read","input":{"limit":10,"file_path":"a.go"}},{"name":"Read","input":{"file_path":"b.go"}}]}`)
+		if err != nil || exact || len(parts) != 2 {
+			t.Fatalf("err=%v exact=%v parts=%#v", err, exact, parts)
+		}
+		if parts[0].FunctionCall.Args["file_path"] != "a.go" || parts[1].FunctionCall.Args["file_path"] != "b.go" {
+			t.Fatalf("unexpected calls: %#v", parts)
+		}
+	})
+
+	t.Run("second top-level object calls are still dropped", func(t *testing.T) {
+		parts, exact, err := parseAnswer(`{"tool_uses":[{"name":"Read","input":{"file_path":"a.go"}},{"name":"Read","input":{"file_path":"b.go"}}]}{"tool_use":{"name":"Bash","input":{"command":"rm -rf /"}}}`)
+		if err != nil || exact || len(parts) != 2 {
+			t.Fatalf("err=%v exact=%v parts=%#v", err, exact, parts)
+		}
+		for _, part := range parts {
+			if part.FunctionCall == nil || part.FunctionCall.Name != "Read" {
+				t.Fatalf("unexpected part: %#v", part)
+			}
+		}
+	})
+}
+
+func TestParseAnswerMalformedToolUses(t *testing.T) {
+	for _, answer := range []string{
+		`{"tool_uses":[{"name":"Bash","input":{"command":"echo "hi""}}]}`,
+		`{"text":"Running.","tool_uses":[{"name":"Bash","input":{"command":"ls`,
+		`{"tool_uses":[null]}`,
+		`{"tool_uses":"not-an-array"}`,
+	} {
+		_, _, err := parseAnswer(answer)
+		var malformed *malformedToolUseError
+		if !errors.As(err, &malformed) {
+			t.Fatalf("%q: error %v, want *malformedToolUseError", answer, err)
+		}
+	}
+	if _, _, err := parseAnswer(`{"tool_uses":[{"name":"","input":{}}]}`); err == nil {
+		t.Fatal("empty tool name must return an error")
+	}
+}
+
+func TestEnvelopeDecoderStreamsTextAndParallelToolUses(t *testing.T) {
+	answer := `{"text":"Checking.","tool_uses":[{"name":"Read","input":{"file_path":"a.go"}},{"name":"Read","input":{"file_path":"b.go"}}]}`
+	var d envelopeDecoder
+	var streamed strings.Builder
+	for _, r := range answer {
+		streamed.WriteString(d.feed(string(r)))
+	}
+	rest, err := d.finish(acp.PromptResponse{StopReason: acp.StopReasonEndTurn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if streamed.String() != "Checking." {
+		t.Fatalf("streamed %q, want %q", streamed.String(), "Checking.")
+	}
+	if len(rest) != 2 || rest[0].FunctionCall == nil || rest[1].FunctionCall == nil {
+		t.Fatalf("rest=%#v", rest)
+	}
+	if !d.exact || len(d.answer) != 3 {
+		t.Fatalf("exact=%v answer=%#v", d.exact, d.answer)
+	}
+}
+
+func TestBuildSystemPromptAppendOverflow(t *testing.T) {
+	smallAppend, smallOverflow := buildSystemPromptAppend("sys\n", "tools\n")
+	if len(smallOverflow) != 0 {
+		t.Fatalf("unexpected overflow: %#v", smallOverflow)
+	}
+	if !strings.HasPrefix(smallAppend, acpAnswerInstructions+acpSystemUpdateNote) {
+		t.Fatalf("append must start with instructions + update note: %q", smallAppend)
+	}
+	if !strings.Contains(smallAppend, "System instructions:\nsys\n") || !strings.Contains(smallAppend, "Claude Code tool definitions for context only:\ntools\n") {
+		t.Fatalf("append missing system or tools: %q", smallAppend)
+	}
+
+	bigTools := strings.Repeat("t", acpSystemPromptBudget+100)
+	bigAppend, bigOverflow := buildSystemPromptAppend("sys\n", bigTools)
+	if len(bigAppend) > acpSystemPromptBudget {
+		t.Fatalf("append exceeded budget: %d > %d", len(bigAppend), acpSystemPromptBudget)
+	}
+	if !strings.Contains(bigAppend, "System instructions:\nsys\n") {
+		t.Fatal("system instructions should still fit in append")
+	}
+	if len(bigOverflow) != 1 || !strings.Contains(bigOverflow[0].text, bigTools) {
+		t.Fatalf("oversized tools must overflow into prompt pieces: len=%d", len(bigOverflow))
+	}
+}
