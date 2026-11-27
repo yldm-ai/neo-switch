@@ -31,8 +31,8 @@ func TestAgyAnswerErrorClassifiesAgyErrorLine(t *testing.T) {
 					t.Fatalf("got %v, want no error", err)
 				}
 			case *translate.RateLimitError:
-				if !errors.As(err, &want) {
-					t.Fatalf("got %T %v, want rate limit", err, err)
+				if !errors.As(err, &want) || !want.Retried {
+					t.Fatalf("got %T %+v, want a rate limit agy already retried", err, err)
 				}
 			case *translate.RetryableError:
 				if !errors.As(err, &want) {

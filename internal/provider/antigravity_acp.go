@@ -758,7 +758,7 @@ const agyErrorMark = "⚠"
 
 var agyErrorAnswer = regexp.MustCompile(`(?s)^⚠\x{FE0F}?\s*(.*?\(code (\d{3})\).*)$`)
 
-// agyAnswerError returns the error an answer made of agy's error line stands for, or nil for any other answer. The reason is classified like a JSON-RPC error first; the HTTP code agy names decides the rest, so a refusal that names no known reason is still retried when Google said it would pass.
+// agyAnswerError returns the error an answer made of agy's error line stands for, or nil for any other answer. The reason is classified like a JSON-RPC error first, and the HTTP code agy names decides the rest. A rate limit is marked as already retried, because agy retried the turn before writing the line.
 func agyAnswerError(answer, model string) error {
 	match := agyErrorAnswer.FindStringSubmatch(strings.TrimSpace(answer))
 	if match == nil {
@@ -766,13 +766,17 @@ func agyAnswerError(answer, model string) error {
 	}
 	reason := shorten(strings.TrimSpace(match[1]), 300)
 	acpLogger.Warn("Antigravity answered with an error instead of an answer", "reason", reason)
-	if classified := refusalFor([]string{reason}, model); classified != nil {
+	code, _ := strconv.Atoi(match[2])
+	classified := refusalFor([]string{reason}, model)
+	var rateLimited *translate.RateLimitError
+	if errors.As(classified, &rateLimited) || classified == nil && code == http.StatusTooManyRequests {
+		// agy writes this line only after retrying the turn itself for about two minutes (2m19s-2m21s in three refusals on 2026-11-27, while small requests went through), so Claude Code's own ten retries would keep the user waiting some twenty minutes for the same refusal.
+		return &translate.RateLimitError{Retried: true, Message: fmt.Sprintf("Google is limiting requests to this model for now, and Antigravity already retried for a couple of minutes. Antigravity said: %q. Try again in a few minutes, or run /neoswitch:off to continue this session on Claude.", reason)}
+	}
+	if classified != nil {
 		return classified
 	}
-	code, _ := strconv.Atoi(match[2])
 	switch {
-	case code == http.StatusTooManyRequests:
-		return &translate.RateLimitError{Message: fmt.Sprintf("Antigravity is limiting how many requests your Google account can send. Antigravity said: %q. Wait a minute and try again, or run /neoswitch:off to continue this session on Claude.", reason)}
 	case code >= 500:
 		return &translate.RetryableError{Message: fmt.Sprintf("Google could not answer this request for now. Antigravity said: %q. Try again in a moment, or run /neoswitch:off to continue this session on Claude.", reason)}
 	default:
