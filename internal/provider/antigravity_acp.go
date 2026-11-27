@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	acp "github.com/coder/acp-go-sdk"
 	"google.golang.org/genai"
@@ -607,9 +610,13 @@ func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, 
 		}
 		s.level = level
 	}
+	var watch errorLineWatch
 	c.subscribe(s.id, func(update acp.SessionUpdate) {
 		if call := update.ToolCall; call != nil {
 			s.sawToolCall(call.ToolCallId)
+		}
+		if chunk := update.AgentMessageChunk; chunk != nil && chunk.Content.Text != nil {
+			watch.feed(chunk.Content.Text.Text)
 		}
 		onUpdate(update)
 	})
@@ -619,6 +626,9 @@ func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, 
 	if err == nil && result.StopReason != acp.StopReasonCancelled {
 		if guardErr := a.checkGuard(c, s); guardErr != nil {
 			return acp.PromptResponse{}, guardErr
+		}
+		if answerErr := agyAnswerError(watch.text(), s.model); answerErr != nil {
+			return acp.PromptResponse{}, answerErr
 		}
 	}
 	if err != nil {
@@ -633,6 +643,43 @@ func (a *AntigravityACP) prompt(ctx context.Context, c *acpConn, s *acpSession, 
 		return acp.PromptResponse{}, errors.New("Antigravity ACP cancelled the prompt")
 	}
 	return result, nil
+}
+
+// errorLineWatch keeps a prompt's answer text only while it can still be agy's error line (see agyErrorAnswer), so ordinary answers are not copied. Chunks arrive on the SDK's notification goroutine; text is read after Prompt returns.
+type errorLineWatch struct {
+	mu      sync.Mutex
+	decided bool
+	keep    bool
+	answer  strings.Builder
+}
+
+func (w *errorLineWatch) feed(chunk string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.decided {
+		w.answer.WriteString(chunk)
+		trimmed := strings.TrimLeftFunc(w.answer.String(), unicode.IsSpace)
+		if trimmed == "" || strings.HasPrefix(agyErrorMark, trimmed) && trimmed != agyErrorMark {
+			return
+		}
+		w.decided, w.keep = true, strings.HasPrefix(trimmed, agyErrorMark)
+		if !w.keep {
+			w.answer.Reset()
+		}
+		return
+	}
+	if w.keep {
+		w.answer.WriteString(chunk)
+	}
+}
+
+func (w *errorLineWatch) text() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.keep {
+		return ""
+	}
+	return w.answer.String()
 }
 
 // requestError turns a failed ACP call into the error the proxy reports. A context error is returned as such so the server maps a deadline to 504. When a deadline passes while agy has produced no output for any session in acpStuckAfter, agy is treated as stuck and restarted, so one wedged process cannot fail every later request. A slow request on a working agy only cancels its own session.
@@ -680,7 +727,11 @@ var (
 
 // agyRefusal turns an agy error that says why Google refused the request into the error Claude Code should show, or returns nil. The reason is quoted in agy's own words, which can name when a quota resets; it is taken from the error message, or from a string in its data, never the JSON itself.
 func agyRefusal(rpcErr *acp.RequestError, model string) error {
-	reasons := append([]string{rpcErr.Message}, jsonStrings(rpcErr.Data)...)
+	return refusalFor(append([]string{rpcErr.Message}, jsonStrings(rpcErr.Data)...), model)
+}
+
+// refusalFor is agyRefusal for the reasons agy gave, in its own words.
+func refusalFor(reasons []string, model string) error {
 	find := func(pattern *regexp.Regexp) string {
 		for _, reason := range reasons {
 			if pattern.MatchString(reason) {
@@ -699,6 +750,34 @@ func agyRefusal(rpcErr *acp.RequestError, model string) error {
 		return &translate.RateLimitError{Message: fmt.Sprintf("Antigravity is limiting how many requests your Google account can send. Antigravity said: %q. Wait a minute and try again, or run /neoswitch:off to continue this session on Claude.", reason)}
 	}
 	return nil
+}
+
+// agyErrorAnswer matches an answer that is nothing but the error line agy prints when Google refused the turn, such as "⚠ RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).". agy ends such a turn normally (stop reason end_turn) and sends the line as the agent's message, not as a JSON-RPC error, so without this check it would reach Claude Code as the model's answer: never retried, and kept in the conversation as if the model had said it.
+// agyErrorMark opens agy's error line; a chunk may end inside its bytes.
+const agyErrorMark = "⚠"
+
+var agyErrorAnswer = regexp.MustCompile(`(?s)^⚠\x{FE0F}?\s*(.*?\(code (\d{3})\).*)$`)
+
+// agyAnswerError returns the error an answer made of agy's error line stands for, or nil for any other answer. The reason is classified like a JSON-RPC error first; the HTTP code agy names decides the rest, so a refusal that names no known reason is still retried when Google said it would pass.
+func agyAnswerError(answer, model string) error {
+	match := agyErrorAnswer.FindStringSubmatch(strings.TrimSpace(answer))
+	if match == nil {
+		return nil
+	}
+	reason := shorten(strings.TrimSpace(match[1]), 300)
+	acpLogger.Warn("Antigravity answered with an error instead of an answer", "reason", reason)
+	if classified := refusalFor([]string{reason}, model); classified != nil {
+		return classified
+	}
+	code, _ := strconv.Atoi(match[2])
+	switch {
+	case code == http.StatusTooManyRequests:
+		return &translate.RateLimitError{Message: fmt.Sprintf("Antigravity is limiting how many requests your Google account can send. Antigravity said: %q. Wait a minute and try again, or run /neoswitch:off to continue this session on Claude.", reason)}
+	case code >= 500:
+		return &translate.RetryableError{Message: fmt.Sprintf("Google could not answer this request for now. Antigravity said: %q. Try again in a moment, or run /neoswitch:off to continue this session on Claude.", reason)}
+	default:
+		return &translate.UnavailableError{Message: fmt.Sprintf("Google refused this request. Antigravity said: %q. Run /neoswitch:status to check the account, or run /neoswitch:off to continue this session on Claude.", reason)}
+	}
 }
 
 // jsonStrings returns the string values in a JSON document, in order.
