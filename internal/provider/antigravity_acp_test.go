@@ -480,6 +480,10 @@ func runFakeACP(mode string) {
 				}
 			case "refusal":
 				p.answer = ""
+			case "agy-error-429":
+				p.answer = "⚠ RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota)."
+			case "warning-text":
+				p.answer = "⚠ This answer ignored the envelope."
 			}
 			askPermission(p)
 		}

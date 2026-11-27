@@ -111,13 +111,15 @@ The model writes JSON by hand, and gets string escapes wrong when a tool call ho
 
 `agy` reads its own slash commands (`/compact`, `/plan`, `/goal`, and the user's own commands and skills it advertises) anywhere in a prompt where a space comes before the slash, not only at the start: a tool result quoting `Run /compact` was taken as a `/compact` the user typed, and the model answered that it could not run it. `agy acp` has no switch to turn this off (`--disable-slash-commands` is for print mode only), so NeoSwitch writes each command name in a form `agy` does not read as a command and the model reads unchanged: in JSON (tool calls, tool results, tool definitions) the slash becomes the escape `\/`, and in plain text an invisible word joiner (U+2060) goes before it.
 
-When Google refuses a request, Claude Code shows the reason in `agy`'s own words:
+When Google refuses a request, Claude Code shows the reason in `agy`'s own words. `agy` reports a refusal either as a JSON-RPC error or, for some refusals, by ending the turn normally with its error line as the answer (`⚠ RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).`). NeoSwitch treats an answer that is nothing but that line as the refusal it is, so it never reaches Claude Code as the model's words or stays in the conversation, and never streams such an answer before the turn ends:
 
 | Reason | What Claude Code does |
 | --- | --- |
 | The account's quota for the model is used up | Shows the reason without retrying, with `/neoswitch:off` as the way to continue on Claude |
-| A rate limit | Retries with backoff (429) |
+| A rate limit, including Google's general `RESOURCE_EXHAUSTED`, which it also sends while `/neoswitch:status` shows the account's 5-hour and weekly usage far from used up | Retries with backoff (429) |
+| A server error (`code 5xx`) in `agy`'s error line | Retries (529) |
 | The conversation is too long for the model | Reports `prompt is too long`, and Claude Code offers `/compact` |
+| Any other refusal in `agy`'s error line | Shows the reason without retrying |
 
 Claude Code's effort setting (`/effort`, `--effort`, `medium` by default) selects `agy`'s thought level for each request: `low`, `medium`, `high` and `xhigh` map directly and `max` uses `xhigh`. The thought level dominates the wait before the first token, so `low` answers simple questions noticeably faster. When `agy` does not offer a level, the request runs at `agy`'s default.
 

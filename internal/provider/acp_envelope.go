@@ -681,6 +681,11 @@ func (d *envelopeDecoder) feed(chunk string) string {
 		switch {
 		case trimmed == "":
 			return ""
+		case strings.HasPrefix(agyErrorMark, trimmed) && trimmed != agyErrorMark:
+			return ""
+		case strings.HasPrefix(trimmed, agyErrorMark):
+			// Possibly agy's error line, which prompt turns into an error once the turn ends; streaming it would show it as the model's answer first.
+			d.mode = envelopeBuffered
 		case trimmed[0] != '{' && trimmed[0] != '`':
 			d.mode = envelopePlain
 		case textEnvelopePrefix.MatchString(s):
