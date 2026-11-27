@@ -597,6 +597,14 @@ func acpTextChunk(text string, usage *genai.GenerateContentResponseUsageMetadata
 	}
 }
 
+// acpThoughtChunk is one streamed piece of internal reasoning text.
+func acpThoughtChunk(text string, usage *genai.GenerateContentResponseUsageMetadata) *genai.GenerateContentResponse {
+	return &genai.GenerateContentResponse{
+		Candidates:    []*genai.Candidate{{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: text, Thought: true}}}}},
+		UsageMetadata: usage,
+	}
+}
+
 // acpFinalResponse carries the remaining parts with agy's stop reason and token usage. ACP reports output tokens including reasoning (totalTokens = inputTokens + outputTokens), so they are passed as candidate tokens only.
 func acpFinalResponse(parts []*genai.Part, result acp.PromptResponse) *genai.GenerateContentResponse {
 	finish := genai.FinishReasonStop

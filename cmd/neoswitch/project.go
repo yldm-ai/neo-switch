@@ -819,7 +819,7 @@ func runDaemon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(os.Stderr, "NeoSwitch daemon on %s (%s, model %s)\n", state.BaseURL(), backendName, model)
-	config := server.Config{Model: model, Token: state.Token}
+	config := server.Config{Model: model, Token: state.Token, ShowThinking: server.ShowThinkingFromEnv()}
 	if backend != nil {
 		config.Backend = backend
 	}

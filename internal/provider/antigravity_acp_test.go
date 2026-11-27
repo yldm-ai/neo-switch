@@ -108,9 +108,10 @@ func runFakeACP(mode string) {
 		_ = out.Encode(msg)
 	}
 	type prompt struct {
-		id     json.RawMessage
-		sid    string
-		answer string
+		id      json.RawMessage
+		sid     string
+		thought string
+		answer  string
 	}
 	var (
 		sessions   int
@@ -161,6 +162,11 @@ func runFakeACP(mode string) {
 		stop := "end_turn"
 		if mode == "refusal" {
 			stop = "refusal"
+		}
+		if p.thought != "" {
+			for _, part := range strings.Split(p.thought, "|") {
+				update(p.sid, "agent_thought_chunk", part)
+			}
 		}
 		if mode == "system-prompt-append" {
 			update(p.sid, "agent_message_chunk", p.answer)
@@ -457,6 +463,20 @@ func runFakeACP(mode string) {
 				p.answer = head + `"tool_use":{"name":"Bash","input":{"command":"echo "hi""}}}`
 				if mode != "tool-malformed" && strings.Contains(text, "was not valid JSON") {
 					p.answer = head + fmt.Sprintf(`"tool_use":{"name":"Bash","input":{"command":"%s %d"}}}`, p.sid, sessionPrompts[p.sid])
+				}
+			case "thought":
+				p.thought = "First thought.| Second thought."
+				p.answer = fmt.Sprintf(`{"text":"%s %d"}`, p.sid, sessionPrompts[p.sid])
+			case "thought-tool":
+				p.thought = "Planning tool call."
+				p.answer = `{"tool_use":{"name":"Read","input":{"file_path":"a.go"}}}`
+			case "thought-split":
+				if strings.Contains(text, "Do not answer it yet") {
+					p.thought = "INTERMEDIATE_LEAK"
+					p.answer = `{"text":"ok"}`
+				} else {
+					p.thought = "FINAL_THOUGHT"
+					p.answer = `{"text":"split-done"}`
 				}
 			case "refusal":
 				p.answer = ""

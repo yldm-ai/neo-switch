@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -32,10 +33,63 @@ type WebSearcher interface {
 	SearchWeb(ctx context.Context, req translate.Request, onQuery func(string)) (translate.SearchResult, error)
 }
 
+// ShowThinkingMode controls whether NeoSwitch forwards upstream thought summaries as Anthropic thinking blocks.
+type ShowThinkingMode int
+
+const (
+	// ThinkingOff suppresses thinking blocks (default, matching upstream NeoSwitch).
+	ThinkingOff ShowThinkingMode = iota
+	// ThinkingOn forwards thinking blocks unless the request explicitly sets thinking.type="disabled".
+	ThinkingOn
+	// ThinkingAlways forwards thinking blocks even when the request sets thinking.type="disabled".
+	ThinkingAlways
+)
+
+func (m ShowThinkingMode) String() string {
+	switch m {
+	case ThinkingOn:
+		return "on"
+	case ThinkingAlways:
+		return "always"
+	default:
+		return "off"
+	}
+}
+
+// ParseShowThinking parses NEOSWITCH_SHOW_THINKING. Unrecognized or empty values default to ThinkingOff.
+func ParseShowThinking(raw string) ShowThinkingMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on", "auto":
+		return ThinkingOn
+	case "always":
+		return ThinkingAlways
+	default:
+		return ThinkingOff
+	}
+}
+
+// ShowThinkingFromEnv returns the configured thinking display mode from NEOSWITCH_SHOW_THINKING.
+func ShowThinkingFromEnv() ShowThinkingMode {
+	return ParseShowThinking(os.Getenv("NEOSWITCH_SHOW_THINKING"))
+}
+
+// IncludeFor reports whether thinking blocks should be forwarded for req.
+func (m ShowThinkingMode) IncludeFor(req anthropic.MessagesRequest) bool {
+	switch m {
+	case ThinkingAlways:
+		return true
+	case ThinkingOn:
+		return req.Thinking == nil || !strings.EqualFold(strings.TrimSpace(req.Thinking.Type), "disabled")
+	default:
+		return false
+	}
+}
+
 type Config struct {
-	Backend Backend
-	Model   string
-	Token   string
+	Backend      Backend
+	Model        string
+	Token        string
+	ShowThinking ShowThinkingMode
 }
 
 func NewHandler(config Config) http.Handler {
@@ -75,7 +129,7 @@ func NewHandler(config Config) http.Handler {
 			writeUpstreamError(w, err)
 			return
 		}
-		response, err := translate.FromGemini(result, request.Model)
+		response, err := translate.FromGeminiWithOptions(result, request.Model, translated.IncludeThoughts)
 		if err != nil {
 			writeUpstreamError(w, err)
 			return
@@ -130,6 +184,7 @@ func decode(w http.ResponseWriter, r *http.Request, config Config) (anthropic.Me
 		writeAPIError(w, http.StatusBadRequest, "invalid_request_error", message)
 		return anthropic.MessagesRequest{}, translate.Request{}, false
 	}
+	translated.IncludeThoughts = config.ShowThinking.IncludeFor(request)
 	translated.Origin = translate.Origin{
 		Session: r.Header.Get("X-Claude-Code-Session-Id"),
 		Class:   r.Header.Get("X-Claude-Code-Request-Class"),
@@ -255,7 +310,7 @@ func streamMessage(ctx, reqCtx context.Context, w http.ResponseWriter, backend B
 		writeUpstreamError(w, err)
 		return
 	}
-	s := &sseWriter{w: w, model: request.Model, reqCtx: reqCtx, backend: backend, request: request}
+	s := &sseWriter{w: w, model: request.Model, reqCtx: reqCtx, backend: backend, request: request, includeThoughts: req.IncludeThoughts}
 	s.flusher, _ = w.(http.Flusher)
 	s.start(first)
 	if !s.chunk(first) {
@@ -278,19 +333,21 @@ func streamMessage(ctx, reqCtx context.Context, w http.ResponseWriter, backend B
 }
 
 type sseWriter struct {
-	w            http.ResponseWriter
-	flusher      http.Flusher
-	model        string
-	reqCtx       context.Context
-	backend      Backend
-	request      anthropic.MessagesRequest
-	toolUses     []safeguardTool
-	index        int
-	textOpen     bool
-	hasToolUse   bool
-	refused      bool
-	finishReason genai.FinishReason
-	usage        anthropic.Usage
+	w               http.ResponseWriter
+	flusher         http.Flusher
+	model           string
+	reqCtx          context.Context
+	backend         Backend
+	request         anthropic.MessagesRequest
+	toolUses        []safeguardTool
+	includeThoughts bool
+	index           int
+	thinkingOpen    bool
+	textOpen        bool
+	hasToolUse      bool
+	refused         bool
+	finishReason    genai.FinishReason
+	usage           anthropic.Usage
 }
 
 func (s *sseWriter) start(first *genai.GenerateContentResponse) {
@@ -320,21 +377,30 @@ func (s *sseWriter) chunk(resp *genai.GenerateContentResponse) bool {
 	}
 	candidate := resp.Candidates[0]
 	if candidate.Content != nil {
-		blocks, err := translate.Blocks(candidate.Content.Parts)
+		blocks, err := translate.BlocksWithOptions(candidate.Content.Parts, s.includeThoughts)
 		if err != nil {
 			s.fail(err)
 			return false
 		}
 		for _, block := range blocks {
 			switch block.Type {
+			case "thinking":
+				if !s.thinkingOpen {
+					s.closeText()
+					s.event("content_block_start", map[string]any{"type": "content_block_start", "index": s.index, "content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""}})
+					s.thinkingOpen = true
+				}
+				s.event("content_block_delta", map[string]any{"type": "content_block_delta", "index": s.index, "delta": map[string]any{"type": "thinking_delta", "thinking": block.Thinking}})
 			case "text":
 				if !s.textOpen {
+					s.closeThinking()
 					s.event("content_block_start", map[string]any{"type": "content_block_start", "index": s.index, "content_block": map[string]any{"type": "text", "text": ""}})
 					s.textOpen = true
 				}
 				s.event("content_block_delta", map[string]any{"type": "content_block_delta", "index": s.index, "delta": map[string]any{"type": "text_delta", "text": block.Text}})
 			case "tool_use":
 				// Gemini delivers each functionCall whole in one chunk (argument streaming is opt-in and not requested), so a tool call is emitted as one complete block and Claude Code never sees partial arguments.
+				s.closeThinking()
 				s.closeText()
 				s.hasToolUse = true
 				s.toolUses = append(s.toolUses, safeguardTool{ID: block.ID, Name: block.Name, Input: block.Input})
@@ -351,6 +417,16 @@ func (s *sseWriter) chunk(resp *genai.GenerateContentResponse) bool {
 	return true
 }
 
+func (s *sseWriter) closeThinking() {
+	if !s.thinkingOpen {
+		return
+	}
+	s.event("content_block_delta", map[string]any{"type": "content_block_delta", "index": s.index, "delta": map[string]any{"type": "signature_delta", "signature": ""}})
+	s.event("content_block_stop", map[string]any{"type": "content_block_stop", "index": s.index})
+	s.thinkingOpen = false
+	s.index++
+}
+
 func (s *sseWriter) closeText() {
 	if !s.textOpen {
 		return
@@ -361,6 +437,7 @@ func (s *sseWriter) closeText() {
 }
 
 func (s *sseWriter) finish() {
+	s.closeThinking()
 	s.closeText()
 	stopReason := "refusal"
 	if !s.refused {

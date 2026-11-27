@@ -46,8 +46,13 @@ type UnsupportedError struct {
 
 func (e *UnsupportedError) Error() string { return e.Message }
 
-// FromGemini translates a complete (non-streaming) Gemini response.
+// FromGemini translates a complete (non-streaming) Gemini response, skipping thought parts.
 func FromGemini(resp *genai.GenerateContentResponse, model string) (anthropic.Response, error) {
+	return FromGeminiWithOptions(resp, model, false)
+}
+
+// FromGeminiWithOptions translates a complete (non-streaming) Gemini response, optionally emitting Anthropic thinking blocks when includeThoughts is true.
+func FromGeminiWithOptions(resp *genai.GenerateContentResponse, model string, includeThoughts bool) (anthropic.Response, error) {
 	out := anthropic.Response{
 		ID:      NewMessageID(),
 		Type:    "message",
@@ -65,7 +70,7 @@ func FromGemini(resp *genai.GenerateContentResponse, model string) (anthropic.Re
 	}
 	candidate := resp.Candidates[0]
 	if candidate.Content != nil {
-		blocks, err := Blocks(candidate.Content.Parts)
+		blocks, err := BlocksWithOptions(candidate.Content.Parts, includeThoughts)
 		if err != nil {
 			return anthropic.Response{}, err
 		}
@@ -79,14 +84,26 @@ func FromGemini(resp *genai.GenerateContentResponse, model string) (anthropic.Re
 	return out, nil
 }
 
-// Blocks converts Gemini parts to Anthropic content blocks. It is used for whole responses and for each streamed chunk; consecutive text blocks from successive chunks are merged by the stream writer.
+// Blocks converts Gemini parts to Anthropic content blocks, skipping thought parts.
 func Blocks(parts []*genai.Part) ([]anthropic.ContentBlock, error) {
+	return BlocksWithOptions(parts, false)
+}
+
+// BlocksWithOptions converts Gemini parts to Anthropic content blocks. It is used for whole responses and for each streamed chunk; consecutive text and thinking blocks from successive chunks are merged by the stream writer.
+func BlocksWithOptions(parts []*genai.Part, includeThoughts bool) ([]anthropic.ContentBlock, error) {
 	var blocks []anthropic.ContentBlock
 	for i, part := range parts {
 		switch {
 		case part == nil:
 		case part.Thought:
-			// Thought summaries are only returned when includeThoughts is requested, which NeoSwitch does not do; skip them rather than leak them as answer text.
+			if includeThoughts && part.Text != "" {
+				sig := ""
+				blocks = append(blocks, anthropic.ContentBlock{
+					Type:      "thinking",
+					Thinking:  part.Text,
+					Signature: &sig,
+				})
+			}
 		case part.FunctionCall != nil:
 			input, err := json.Marshal(part.FunctionCall.Args)
 			if err != nil {

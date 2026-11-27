@@ -132,17 +132,27 @@ func identified(req translate.Request) translate.Request {
 	return req
 }
 
-// generateConfig returns the config to send and whether it carries the request's thinking level. The level is set on a copy so the shared request config is never modified. It is left out when the request names none or when this model has already rejected one. The per-level support of each model was not verified against the live API, which is why a rejection drops the level instead of failing the request.
+// generateConfig returns the config to send and whether it carries thinking settings. The settings are applied on a copy so the shared request config is never modified. They are left out when neither thinking level nor thought summaries are requested, or when this model has already rejected thinking configuration. The per-level support of each model was not verified against the live API, which is why a rejection drops the thinking configuration instead of failing the request.
 func (g *Gemini) generateConfig(req translate.Request) (*genai.GenerateContentConfig, bool) {
-	if req.ThinkingLevel == "" || g.thinkingLevelRejected.Load() {
+	wantLevel := req.ThinkingLevel != "" && !g.thinkingLevelRejected.Load()
+	wantThoughts := req.IncludeThoughts && !g.thinkingLevelRejected.Load()
+	if !wantLevel && !wantThoughts {
 		return req.Config, false
 	}
-	config := *req.Config
-	var thinking genai.ThinkingConfig
-	if req.Config.ThinkingConfig != nil {
-		thinking = *req.Config.ThinkingConfig
+	var config genai.GenerateContentConfig
+	if req.Config != nil {
+		config = *req.Config
 	}
-	thinking.ThinkingLevel = req.ThinkingLevel
+	var thinking genai.ThinkingConfig
+	if config.ThinkingConfig != nil {
+		thinking = *config.ThinkingConfig
+	}
+	if wantLevel {
+		thinking.ThinkingLevel = req.ThinkingLevel
+	}
+	if wantThoughts {
+		thinking.IncludeThoughts = true
+	}
 	config.ThinkingConfig = &thinking
 	return &config, true
 }

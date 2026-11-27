@@ -2,7 +2,7 @@ package anthropic
 
 import "encoding/json"
 
-// MessagesRequest is the subset of the Anthropic Messages request that NeoSwitch translates. Fields Claude Code sends but Gemini has no equivalent for (metadata, thinking, cache_control) are accepted and ignored at the JSON level; content blocks are validated strictly by the translator.
+// MessagesRequest is the subset of the Anthropic Messages request that NeoSwitch translates. Fields Claude Code sends but Gemini has no equivalent for (metadata, cache_control) are accepted and ignored at the JSON level; content blocks are validated strictly by the translator.
 type MessagesRequest struct {
 	Model       string          `json:"model"`
 	MaxTokens   int             `json:"max_tokens"`
@@ -82,7 +82,7 @@ type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
 	Thinking  string          `json:"thinking,omitempty"`
-	Signature string          `json:"signature,omitempty"`
+	Signature *string         `json:"signature,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`

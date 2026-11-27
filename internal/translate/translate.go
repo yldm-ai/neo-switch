@@ -19,6 +19,8 @@ type Request struct {
 	Config   *genai.GenerateContentConfig
 	// ThinkingLevel is the request's effort mapped onto Gemini's thinking levels, empty when the request names none or an effort NeoSwitch does not know. It is kept out of Config so each backend decides whether to apply it: the Antigravity ACP route selects agy's thought level from it, and the Gemini API route sends it as thinkingConfig.thinkingLevel, dropping it for the rest of the backend's life if the model rejects it, because per-model support for each level has not been verified against the live API.
 	ThinkingLevel genai.ThinkingLevel
+	// IncludeThoughts asks the backend and response translator to forward upstream thought summaries as Anthropic thinking blocks. Disabled by default; enabled via NEOSWITCH_SHOW_THINKING.
+	IncludeThoughts bool
 	// WebSearch is set when the request offers nothing but Anthropic's web search server tool, which is how Claude Code's WebSearch tool asks for one search. A backend that can search answers it with its own search (server.WebSearcher); for the others it stays unsupported (WebSearchUnsupported).
 	WebSearch *WebSearch
 	// Origin is who in Claude Code sent the request, empty when Claude Code did not say. Backends that keep state per conversation use it to tell the main thread from requests that share its history; the Gemini API route, which keeps none, ignores it.
