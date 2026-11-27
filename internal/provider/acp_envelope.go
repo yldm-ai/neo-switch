@@ -31,8 +31,8 @@ const acpSystemPromptBudget = 380_000
 // acpAnswerInstructions open the prompt the model answers (or the session system prompt when agy advertises _meta.antigravity.systemPrompt.append). agy keeps the start of a prompt, so they come first.
 const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one or more of the supplied Claude Code tools use {\"tool_uses\":[{\"name\":\"tool name\",\"input\":{...}},...]} (include multiple entries to run independent tools in parallel, or {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}} for a single call, optionally with \"text\"). Escape literal backslashes inside JSON strings as \\\\. Do not use ACP tools, edit files, or run commands yourself.\n\n"
 
-// acpSystemUpdateNote tells the model that later continuation messages marked as updated system instructions or tool definitions supersede those pinned in session/new's systemPrompt.append.
-const acpSystemUpdateNote = "If a later message begins with \"Updated system instructions, replacing the earlier ones:\" or \"Updated Claude Code tool definitions, replacing the earlier ones:\", those updated definitions replace the initial ones below.\n\n"
+// acpSystemUpdateNote tells the model that later continuation messages marked as updated or appended system instructions or tool definitions supersede or extend those pinned in session/new's systemPrompt.append.
+const acpSystemUpdateNote = "If a later message begins with \"Updated system instructions, replacing the earlier ones:\" or \"Updated Claude Code tool definitions, replacing the earlier ones:\", those updated definitions replace the initial ones below. If it begins with \"Additional system instructions appended to the earlier ones:\", treat them as appended to the earlier system instructions.\n\n"
 
 // acpPiece is prompt text with the images that belong to it.
 type acpPiece struct {
@@ -121,6 +121,22 @@ func contextPieces(system, tools string, updated bool) []acpPiece {
 	}
 	if tools != "" {
 		pieces = append(pieces, acpPiece{text: toolsLabel + tools + "\n"})
+	}
+	return pieces
+}
+
+// contextPiecesForContinuation labels changed system instructions and tool definitions for a continued session. When systemAppended is true, system holds only the suffix appended since the previous prompt rather than a full replacement.
+func contextPiecesForContinuation(system string, systemAppended bool, tools string) []acpPiece {
+	var pieces []acpPiece
+	if system != "" {
+		label := "Updated system instructions, replacing the earlier ones:\n"
+		if systemAppended {
+			label = "Additional system instructions appended to the earlier ones:\n"
+		}
+		pieces = append(pieces, acpPiece{text: label + system + "\n"})
+	}
+	if tools != "" {
+		pieces = append(pieces, acpPiece{text: "Updated Claude Code tool definitions, replacing the earlier ones:\n" + tools + "\n"})
 	}
 	return pieces
 }

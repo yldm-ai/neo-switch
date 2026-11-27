@@ -74,6 +74,8 @@ type acpSession struct {
 	systemPrompted bool
 	// system and tools are the hashes of the raw (pre-neutralization) system instructions and tool definitions the session read last.
 	system, tools string
+	// systemText is the raw (pre-neutralization) system instructions string the session read last, so append-only updates can send only the newly appended suffix.
+	systemText string
 	// level is the thought level NeoSwitch selected, or "" for agy's default.
 	level acp.SessionConfigValueId
 	// model is the model that answers the session; a request continues only a session of the model it asks for.
