@@ -19,7 +19,7 @@ Claude Code still runs the session, permissions, tool execution, MCP servers, sk
 | Token usage and `count_tokens` | Reported; `count_tokens` is estimated on the Developer API | Reported, including under 1k tokens of slim `neoswitch` agent overhead |
 | Gemini 4 Neon access | Depends on your key or project; check with `neoswitch doctor` | Verified with a signed-in `agy` |
 
-Not supported on either path: server tools such as code execution, URL image and document sources, and Claude thinking blocks. Claude Code's WebSearch works on the Antigravity route, which searches with Google ([antigravity.md](antigravity.md#web-search)), and not with a Gemini API key. `cache_control` and `context_management` are ignored. Claude Code's `/model` choice does not change the model that answers: every Google route uses `GEMINI_MODEL`, which defaults to `gemini-4-neon`. NeoSwitch never falls back to another model silently.
+Not supported on either path: server tools such as code execution, URL image and document sources, and replaying Claude's signed thinking blocks in conversation history. Upstream reasoning can be surfaced as Claude Code thinking blocks by setting `NEOSWITCH_SHOW_THINKING=on` (off by default). Claude Code's WebSearch works on the Antigravity route, which searches with Google ([antigravity.md](antigravity.md#web-search)), and not with a Gemini API key. `cache_control` and `context_management` are ignored. Claude Code's `/model` choice does not change the model that answers: every Google route uses `GEMINI_MODEL`, which defaults to `gemini-4-neon`. NeoSwitch never falls back to another model silently.
 
 The full endpoint contract is in [protocol-contract.md](protocol-contract.md), and ACP details are in [antigravity.md](antigravity.md).
 
@@ -140,6 +140,7 @@ Run `neoswitch off` in each project you enabled before removing NeoSwitch. To re
 | Variable | Effect |
 |---|---|
 | `NEOSWITCH_BACKEND` | `antigravity`, `gemini`, `openai` or `auto`; overrides the saved choice |
+| `NEOSWITCH_NO_HINT=1` | Plugin only: turn off the once-a-day `/neoswitch:on` note in sessions that do not use NeoSwitch |
 | `NEOSWITCH_NO_UPDATE_CHECK=1` | Plugin only: do not check GitHub for a newer NeoSwitch |
 | `NEOSWITCH_STATE_DIR` | State directory (default: `~/Library/Application Support/neoswitch/` on macOS, `$XDG_CONFIG_HOME/neoswitch/` or `~/.config/neoswitch/` on Linux) |
 | `GEMINI_API_KEY` | Gemini Developer API key |
@@ -155,6 +156,7 @@ Run `neoswitch off` in each project you enabled before removing NeoSwitch. To re
 | `OPENAI_BASE_URL` | OpenAI API base URL including `/v1` (default: `https://api.openai.com/v1`) |
 | `CLAUDE_CLI_PATH` | Claude executable (default: `claude`) |
 | `ANTIGRAVITY_CLI_PATH` | Antigravity executable (default: `agy` on `PATH`, then `~/.local/bin/agy`, where Google's installer puts it). When set, `/neoswitch:login` does not install `agy` |
+| `ANTIGRAVITY_ACP_AGENT` | Antigravity ACP agent name (default: `neoswitch`, the slim agent installed in `agy-workspace`) |
 | `NEOSWITCH_LISTEN` | `serve` listen address (default: `127.0.0.1:8080`) |
 | `NEOSWITCH_AUTH_TOKEN` | Token for standalone `serve`; required when `NEOSWITCH_LISTEN` is not a loopback address |
 
