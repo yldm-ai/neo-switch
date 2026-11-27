@@ -25,14 +25,10 @@ import (
 // acpPromptBudget is the most text NeoSwitch puts in one ACP prompt. agy keeps only the first 192,000 bytes of a prompt's text and replaces the rest with a "<truncated N bytes>" marker telling the model to read the full transcript with its own tools, which NeoSwitch refuses: the newest messages, which come last, would be lost without any error. The margin leaves room for the instructions that open every prompt.
 const acpPromptBudget = 150_000
 
-// acpSystemPromptBudget is the most text NeoSwitch places in _meta.antigravity.systemPrompt.append on session/new. Verified on agy 1.5.17 to accept >=420 KB without the 192 KB user-prompt truncation; anything larger overflows cleanly into prompt pieces.
-const acpSystemPromptBudget = 380_000
-
-// acpAnswerInstructions open the prompt the model answers (or the session system prompt when agy advertises _meta.antigravity.systemPrompt.append). agy keeps the start of a prompt, so they come first.
+// acpAnswerInstructions open the prompt the model answers, or are the session system prompt when agy advertises _meta.antigravity.systemPrompt.append. agy keeps the start of a prompt, so they come first.
+//
+// They are the only text NeoSwitch puts in the session system prompt. Claude Code's own system instructions and tool definitions always travel in the prompt: Antigravity refuses any turn whose system prompt carries a line Claude Code identifies itself with (its billing header, "You are Claude Code, Anthropic's official CLI for Claude.", the Agent SDK identity line), answering a 429 "Resource has been exhausted (e.g. check quota)" however much quota is left, while the same text in the prompt passes (agy 1.5.18, 2026-11-27). NeoSwitch neither removes nor rewrites those lines.
 const acpAnswerInstructions = "Act as the language model for Claude Code. " + ModelIdentity + " Return exactly one JSON object and no markdown. For a normal answer use {\"text\":\"...\"}. To invoke one or more of the supplied Claude Code tools use {\"tool_uses\":[{\"name\":\"tool name\",\"input\":{...}},...]} (include multiple entries to run independent tools in parallel, or {\"tool_use\":{\"name\":\"tool name\",\"input\":{...}}} for a single call, optionally with \"text\"). Escape literal backslashes inside JSON strings as \\\\. Do not use ACP tools, edit files, or run commands yourself.\n\n"
-
-// acpSystemUpdateNote tells the model that later continuation messages marked as updated or appended system instructions or tool definitions supersede or extend those pinned in session/new's systemPrompt.append.
-const acpSystemUpdateNote = "If a later message begins with \"Updated system instructions, replacing the earlier ones:\" or \"Updated Claude Code tool definitions, replacing the earlier ones:\", those updated definitions replace the initial ones below. If it begins with \"Additional system instructions appended to the earlier ones:\", treat them as appended to the earlier system instructions.\n\n"
 
 // acpPiece is prompt text with the images that belong to it.
 type acpPiece struct {
@@ -85,30 +81,6 @@ func (r *promptRenderer) context(req translate.Request) (system, tools string) {
 	return neutralizeContext(rawSystem, rawTools)
 }
 
-// buildSystemPromptAppend packs acpAnswerInstructions plus system instructions and tool definitions into _meta.antigravity.systemPrompt.append up to acpSystemPromptBudget. Pieces that do not fit overflow into the returned slice so acpPrompts delivers them safely.
-func buildSystemPromptAppend(system, tools string) (string, []acpPiece) {
-	var out strings.Builder
-	out.WriteString(acpAnswerInstructions)
-	if system != "" || tools != "" {
-		out.WriteString(acpSystemUpdateNote)
-	}
-	var overflow []acpPiece
-	tryAppend := func(label, body string) {
-		if body == "" {
-			return
-		}
-		block := label + body + "\n"
-		if out.Len()+len(block) <= acpSystemPromptBudget {
-			out.WriteString(block)
-			return
-		}
-		overflow = append(overflow, acpPiece{text: block})
-	}
-	tryAppend("System instructions:\n", system)
-	tryAppend("Claude Code tool definitions for context only:\n", tools)
-	return out.String(), overflow
-}
-
 // contextPieces labels the system instructions and tool definitions for the prompt; updated marks them as replacing those a session read before.
 func contextPieces(system, tools string, updated bool) []acpPiece {
 	systemLabel, toolsLabel := "System instructions:\n", "Claude Code tool definitions for context only:\n"
@@ -155,7 +127,7 @@ func (r *promptRenderer) builder() *promptBuilder {
 	return &promptBuilder{renderer: r}
 }
 
-// acpPrompt renders the whole request as one prompt text, used for token estimation and when agy does not advertise _meta.antigravity.systemPrompt.append. Images become ACP image blocks sent after the text when the agent accepts them (acceptImages); the text marks where each one belongs. Attachments ACP cannot carry are marked as omitted so the model knows they existed.
+// acpPrompt renders the whole request as one prompt text, used for token estimation. Images become ACP image blocks sent after the text when the agent accepts them (acceptImages); the text marks where each one belongs. Attachments ACP cannot carry are marked as omitted so the model knows they existed.
 func acpPrompt(req translate.Request, acceptImages bool) (string, []acp.ContentBlock) {
 	var out strings.Builder
 	var images []acp.ContentBlock
@@ -178,17 +150,7 @@ func conversationPieces(req translate.Request, acceptImages bool) []acpPiece {
 	return pieces
 }
 
-// messagePieces renders only the conversation messages (used when system instructions and tool definitions were sent in _meta.antigravity.systemPrompt.append).
-func messagePieces(contents []*genai.Content, acceptImages bool) []acpPiece {
-	r := &promptRenderer{acceptImages: acceptImages}
-	pieces := make([]acpPiece, 0, len(contents))
-	for _, content := range contents {
-		pieces = append(pieces, r.entry(content))
-	}
-	return pieces
-}
-
-// acpPrompts packs pieces into the prompts that deliver them, none longer than acpPromptBudget. Each prompt but the last asks only for {"text":"ok"}; the last starts with instructions (empty when already pinned in systemPrompt.append) and continued, which tells a session that already holds the conversation what the new text is. A piece too long for one prompt is split, at a line break where there is one.
+// acpPrompts packs pieces into the prompts that deliver them, none longer than acpPromptBudget. Each prompt but the last asks only for {"text":"ok"}; the last starts with instructions (empty when the session system prompt already holds them) and continued, which tells a session that already holds the conversation what the new text is. A piece too long for one prompt is split, at a line break where there is one.
 func acpPrompts(pieces []acpPiece, instructions, continued string) []acpPiece {
 	const headroom = 1024
 	capacity := acpPromptBudget - len(instructions) - len(continued) - headroom

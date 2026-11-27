@@ -899,12 +899,13 @@ func TestACPSystemPromptAppendAndContinuation(t *testing.T) {
 		}
 		return s
 	}
-	// System + tools (~100 KB) + user message (~80 KB) exceeds acpPromptBudget (150 KB), yet fits in one prompt once system + tools move to systemPrompt.append.
-	req1 := textRequest(strings.Repeat("u", 80_000))
+	// Claude Code's system prompt opens with the lines it identifies itself with; Antigravity refuses a turn whose session system prompt carries any of them (fake 429), so they must reach agy in the prompt, verbatim.
+	const identity = "x-anthropic-billing-header: cc_version=2.1.300.abc; cc_entrypoint=cli;\nYou are Claude Code, Anthropic's official CLI for Claude.\n"
+	req1 := textRequest(strings.Repeat("u", 20_000))
 	req1.Config = &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText("Use /probe-turn2-cmd when needed.", genai.RoleUser),
+		SystemInstruction: genai.NewContentFromText(identity+"Use /probe-turn2-cmd when needed.", genai.RoleUser),
 		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{
-			{Name: "Read", Description: strings.Repeat("t", 100_000)},
+			{Name: "Read", Description: strings.Repeat("t", 20_000)},
 		}}},
 	}
 	resp1, err := a.Generate(context.Background(), req1)
@@ -914,18 +915,16 @@ func TestACPSystemPromptAppendAndContinuation(t *testing.T) {
 	text1 := generatedText(t, resp1)
 	s1 := decode(t, text1)
 	if s1.Prompts != 1 {
-		t.Fatalf("expected 1 prompt with systemPrompt.append, got %d", s1.Prompts)
+		t.Fatalf("expected 1 prompt, got %d", s1.Prompts)
 	}
-	if !strings.HasPrefix(s1.Append, acpAnswerInstructions+acpSystemUpdateNote) {
-		t.Fatalf("append missing instructions/update note: %q", s1.Append[:min(len(s1.Append), 120)])
+	if s1.Append != acpAnswerInstructions {
+		t.Fatalf("session system prompt must hold only NeoSwitch's instructions, got %q", s1.Append[:min(len(s1.Append), 200)])
 	}
-	if !strings.Contains(s1.Append, "Use /probe-turn2-cmd when needed.") || !strings.Contains(s1.Append, "\"Read\"") {
-		t.Fatal("append missing system instructions or tool definitions")
+	if !strings.Contains(s1.Prompt, "System instructions:\n"+identity) || !strings.Contains(s1.Prompt, "\"Read\"") {
+		t.Fatal("prompt must carry Claude Code's system instructions, identity lines verbatim, and tool definitions")
 	}
-	for _, inline := range []string{acpAnswerInstructions, "System instructions:", "Claude Code tool definitions"} {
-		if strings.Contains(s1.Prompt, inline) {
-			t.Fatalf("prompt must not duplicate %q when pinned in systemPrompt.append", inline)
-		}
+	if strings.Contains(s1.Prompt, acpAnswerInstructions) {
+		t.Fatal("prompt must not repeat the instructions pinned in the session system prompt")
 	}
 	// Large fresh request (> maxOverheadLearnTokens) must not poison promptOverhead.
 	if got := a.promptOverhead.Load(); got != 0 {

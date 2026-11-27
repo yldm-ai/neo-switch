@@ -389,23 +389,12 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText,
 	pieces, continued := a.continuation(x, req, keys)
 	fresh := x.session == nil
 	if fresh {
-		rawSystem, rawTools := rawContext(req)
-		var appendText string
-		var overflow []acpPiece
-		if c.systemPromptAppend {
-			sys, tools := neutralizeContext(rawSystem, rawTools)
-			appendText, overflow = buildSystemPromptAppend(sys, tools)
-		}
-		if x.session, err = a.newSession(ctx, c, x.model, appendText); err != nil {
+		// Only NeoSwitch's own instructions go in the session system prompt; Claude Code's system instructions and tool definitions stay in the prompt (see acpAnswerInstructions).
+		if x.session, err = a.newSession(ctx, c, x.model, acpAnswerInstructions); err != nil {
 			c.release()
 			return nil, err
 		}
-		if x.session.systemPrompted {
-			x.session.system, x.session.systemText, x.session.tools = textKey(rawSystem), rawSystem, textKey(rawTools)
-			pieces = append(overflow, messagePieces(req.Contents, c.imagePrompts)...)
-		} else {
-			pieces = a.freshPieces(x.session, req, c.imagePrompts)
-		}
+		pieces = a.freshPieces(x.session, req, c.imagePrompts)
 		if x.role == roleOther && len(req.Contents) > 0 {
 			x.branch = keys[len(req.Contents)-1]
 		}
@@ -530,7 +519,7 @@ func (a *AntigravityACP) freshPieces(s *acpSession, req translate.Request, accep
 	return conversationPieces(req, acceptImages)
 }
 
-// newSession opens a session answering with model. When systemPrompt is non-empty and agy advertises _meta.antigravity.systemPrompt.append, it is attached on session/new so agy pins it in the session's system prompt. A background model the account's plan does not offer gives way to the main model: background requests are no reason to fail.
+// newSession opens a session answering with model. When systemPrompt is non-empty and agy advertises _meta.antigravity.systemPrompt.append, it is attached on session/new so agy pins it in the session's system prompt; it must be NeoSwitch's own text, never Claude Code's (see acpAnswerInstructions). A background model the account's plan does not offer gives way to the main model: background requests are no reason to fail.
 func (a *AntigravityACP) newSession(ctx context.Context, c *acpConn, model, systemPrompt string) (*acpSession, error) {
 	req := acp.NewSessionRequest{Cwd: a.cwd, McpServers: []acp.McpServer{}}
 	systemPrompted := c.systemPromptAppend && systemPrompt != ""
@@ -1011,7 +1000,7 @@ var acpLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 type acpConn struct {
 	cmd *exec.Cmd
 	// workspace is the folder agy runs in, which holds the tool guard's records.
-	workspace    string
+	workspace          string
 	conn               *acp.ClientSideConnection
 	imagePrompts       bool
 	systemPromptAppend bool
