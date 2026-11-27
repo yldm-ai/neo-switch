@@ -15,8 +15,6 @@ type MessagesRequest struct {
 	TopP        *float64        `json:"top_p,omitempty"`
 	TopK        *int            `json:"top_k,omitempty"`
 	Stop        []string        `json:"stop_sequences,omitempty"`
-	// Thinking carries the client's thinking configuration (for example {"type":"disabled"} or {"type":"adaptive"}).
-	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 	// OutputConfig carries the effort Claude Code sends with every request (its /effort and --effort setting, "medium" by default).
 	OutputConfig *OutputConfig `json:"output_config,omitempty"`
 	// Thinking carries the Anthropic extended-thinking request configuration (e.g. {"type":"enabled","budget_tokens":8000}, {"type":"adaptive"}, or {"type":"disabled"}).
@@ -45,12 +43,6 @@ type SafeguardVerdict struct {
 	Outcome     string `json:"outcome,omitempty"`
 	Explanation string `json:"explanation,omitempty"`
 	Reason      string `json:"reason,omitempty"`
-}
-
-type ThinkingConfig struct {
-	Type         string `json:"type,omitempty"`
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
-	Display      string `json:"display,omitempty"`
 }
 
 type OutputConfig struct {

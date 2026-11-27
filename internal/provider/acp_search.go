@@ -93,7 +93,7 @@ func (a *AntigravityACP) SearchWeb(ctx context.Context, req translate.Request, o
 		exceeded bool
 	)
 	// Queries reach onQuery on this goroutine; the SDK's notification goroutine only queues them.
-	found := newChunkQueue()
+	found := newChunkQueue[string]()
 	onUpdate := func(update acp.SessionUpdate) {
 		if chunk := update.AgentMessageChunk; chunk != nil && chunk.Content.Text != nil {
 			mu.Lock()

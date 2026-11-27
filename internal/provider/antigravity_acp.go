@@ -243,7 +243,8 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 		firstUsage := &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: int32(estimate)}
 		// Ending the iteration early (Claude Code disconnected) cancels the prompt in agy.
 		ctx, cancel := context.WithCancel(ctx)
-		queue := newACPChunkQueue()
+		queue := newChunkQueue[acpChunk]()
+		pushText := func(text string) { queue.push(acpChunk{text: text}) }
 		type outcome struct {
 			x   *acpExchange
 			err error
@@ -252,9 +253,9 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 		go func() {
 			var onThought func(string)
 			if req.IncludeThoughts {
-				onThought = queue.pushThought
+				onThought = func(text string) { queue.push(acpChunk{thought: true, text: text}) }
 			}
-			x, err := a.run(ctx, req, queue.pushText, onThought)
+			x, err := a.run(ctx, req, pushText, onThought)
 			done <- outcome{x, err}
 		}()
 		var (
@@ -325,7 +326,7 @@ func (a *AntigravityACP) Stream(ctx context.Context, req translate.Request) iter
 					decoder = envelopeDecoder{mode: envelopeBuffered}
 					decoder.emitted.WriteString(streamed)
 					go func(x *acpExchange) {
-						err := a.repairToolUse(ctx, x, req, malformed, queue.pushText)
+						err := a.repairToolUse(ctx, x, req, malformed, pushText)
 						if err != nil {
 							// repairToolUse already closed the session and released agy, as run does when it fails.
 							x = nil
@@ -1130,16 +1131,16 @@ func (c *acpConn) WaitForTerminalExit(context.Context, acp.WaitForTerminalExitRe
 	return acp.WaitForTerminalExitResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalWaitForExit)
 }
 
-// chunkQueue hands string chunks from the SDK's notification goroutine to a streaming caller without ever blocking the former.
-type chunkQueue struct {
+// chunkQueue hands chunks from the SDK's notification goroutine to a streaming caller without ever blocking the former: a slow Claude Code connection must not stall updates for every other session.
+type chunkQueue[T any] struct {
 	mu     sync.Mutex
-	chunks []string
+	chunks []T
 	ready  chan struct{}
 }
 
-func newChunkQueue() *chunkQueue { return &chunkQueue{ready: make(chan struct{}, 1)} }
+func newChunkQueue[T any]() *chunkQueue[T] { return &chunkQueue[T]{ready: make(chan struct{}, 1)} }
 
-func (q *chunkQueue) push(chunk string) {
+func (q *chunkQueue[T]) push(chunk T) {
 	q.mu.Lock()
 	q.chunks = append(q.chunks, chunk)
 	q.mu.Unlock()
@@ -1149,7 +1150,7 @@ func (q *chunkQueue) push(chunk string) {
 	}
 }
 
-func (q *chunkQueue) drain() []string {
+func (q *chunkQueue[T]) drain() []T {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	chunks := q.chunks
@@ -1157,37 +1158,8 @@ func (q *chunkQueue) drain() []string {
 	return chunks
 }
 
+// acpChunk is one streamed piece of the answer, or of the reasoning before it.
 type acpChunk struct {
 	thought bool
 	text    string
-}
-
-// acpChunkQueue hands answer and reasoning chunks from the SDK's notification goroutine to the streaming request without ever blocking the former: a slow Claude Code connection must not stall updates for every other session.
-type acpChunkQueue struct {
-	mu     sync.Mutex
-	chunks []acpChunk
-	ready  chan struct{}
-}
-
-func newACPChunkQueue() *acpChunkQueue { return &acpChunkQueue{ready: make(chan struct{}, 1)} }
-
-func (q *acpChunkQueue) pushText(chunk string)    { q.push(acpChunk{text: chunk}) }
-func (q *acpChunkQueue) pushThought(chunk string) { q.push(acpChunk{thought: true, text: chunk}) }
-
-func (q *acpChunkQueue) push(chunk acpChunk) {
-	q.mu.Lock()
-	q.chunks = append(q.chunks, chunk)
-	q.mu.Unlock()
-	select {
-	case q.ready <- struct{}{}:
-	default:
-	}
-}
-
-func (q *acpChunkQueue) drain() []acpChunk {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	chunks := q.chunks
-	q.chunks = nil
-	return chunks
 }
