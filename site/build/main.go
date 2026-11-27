@@ -146,7 +146,7 @@ func render(tpl *template.Template, l Lang, s map[string]string) ([]byte, error)
 		"url":                 l.URL,
 		"image":               origin + "/og.png",
 		"applicationCategory": "DeveloperApplication",
-		"operatingSystem":     "macOS, Linux, Windows",
+		"operatingSystem":     "macOS, Linux",
 		"license":             "https://github.com/yldm-ai/neo-switch/blob/main/LICENSE",
 		"downloadUrl":         "https://github.com/yldm-ai/neo-switch/releases",
 		"sameAs":              []string{"https://github.com/yldm-ai/neo-switch"},

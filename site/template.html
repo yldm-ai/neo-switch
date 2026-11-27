@@ -397,7 +397,7 @@
             <div class="term-bar"><div class="dots"><i></i><i></i><i></i></div><span>claude</span></div>
             <div class="term-body">
               <div class="tl"><code><span class="p">&gt; </span><span class="hl-cmd">/neoswitch:status</span></code><button class="copy" data-copy="/neoswitch:status">{{index .T "copy"}}</button></div>
-              <div class="tl"><code><span class="c">  NeoSwitch ... -&gt; </span><span class="hl-ok">gemini-4-neon</span></code></div>
+              <div class="tl"><code><span class="c">  </span><span class="hl-ok">This session uses Gemini 4 Neon</span><span class="c"> · 5-hour 20% used</span></code></div>
             </div>
           </div>
         </div>
@@ -437,9 +437,12 @@
           <tr><td>{{index .T "row_streaming"}}</td><td class="ok">{{index .T "supported"}}</td><td class="ok">{{index .T "supported"}}</td></tr>
           <tr><td>{{index .T "row_tools"}}</td><td class="ok">{{index .T "tools_api"}}</td><td class="part">{{index .T "tools_acp"}}</td></tr>
           <tr><td>{{index .T "row_multiturn"}}</td><td class="ok">{{index .T "supported"}}</td><td class="ok">{{index .T "supported"}}</td></tr>
+          <tr><td>{{index .T "row_websearch"}}</td><td class="no">{{index .T "not_supported"}}</td><td class="ok">{{index .T "websearch_acp"}}</td></tr>
+          <tr><td>{{index .T "row_automode"}}</td><td class="ok">{{index .T "automode_api"}}</td><td class="ok">{{index .T "automode_acp"}}</td></tr>
           <tr><td>{{index .T "row_images"}}</td><td class="ok">{{index .T "supported"}}</td><td class="part">{{index .T "images_acp"}}</td></tr>
           <tr><td>PDF</td><td class="ok">{{index .T "supported"}}</td><td class="no">{{index .T "not_supported"}}</td></tr>
-          <tr><td><code>/effort</code></td><td class="no">{{index .T "effort_api"}}</td><td class="ok">{{index .T "effort_acp"}}</td></tr>
+          <tr><td><code>/effort</code></td><td class="part">{{index .T "effort_api"}}</td><td class="ok">{{index .T "effort_acp"}}</td></tr>
+          <tr><td>{{index .T "row_thinking"}}</td><td class="part">{{index .T "thinking_opt"}}</td><td class="part">{{index .T "thinking_opt"}}</td></tr>
           <tr><td>{{index .T "row_tokens"}}</td><td class="ok">{{index .T "tokens_api"}}</td><td class="part">{{index .T "tokens_acp"}}</td></tr>
         </tbody>
       </table>
