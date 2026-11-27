@@ -2,25 +2,25 @@
 
 [English](../README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | **한국어** | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português (Brasil)](README.pt-BR.md) | [Русский](README.ru.md)
 
-[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://github.com/yldm-ai/neo-switch/blob/main/.claude-plugin/plugin.json) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/yldm-ai/neo-switch/blob/main/LICENSE)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://github.com/yldm-ai/neo-switch/blob/main/.claude-plugin/plugin.json) [![Release](https://img.shields.io/github/v/release/yldm-ai/neo-switch)](https://github.com/yldm-ai/neo-switch/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/yldm-ai/neo-switch/blob/main/LICENSE)
 
-NeoSwitch를 쓰면 Claude Code는 그대로 두고, Claude 대신 Google의 Gemini 4 Neon 모델이 답합니다.
+NeoSwitch를 사용하면 기존 Claude Code 설정, 커넥터, 권한, 다른 창은 그대로 둔 채 원하는 개별 세션만 Google의 Gemini 4 Neon으로 전환할 수 있습니다.
 
 [![세 단계로 NeoSwitch 설정하기](../docs/media/neoswitch-demo.gif)](../docs/media/neoswitch-demo.mp4)
 
-프로젝트마다 따로 전환하며, 다른 프로젝트는 계속 Claude를 씁니다. 플러그인은 macOS와 Linux에서 동작합니다. Windows는 아직 지원하지 않습니다.
+한 번에 한 세션씩 전환합니다 — 같은 프로젝트의 다른 창은 계속 Claude를 씁니다. 플러그인은 macOS와 Linux에서 동작하며 Windows는 아직 지원하지 않습니다.
 
-## 다른 도구와의 비교
+## 주요 특징
 
-| | **NeoSwitch** | **설정 관리자 및 라우터**<br>(예: CC Switch, Claude Code Router) | **독립형 Antigravity 프록시**<br>(예: antigravity-claude-proxy) |
-|---|---|---|---|
-| **설치 형태** | Claude Code 네이티브 플러그인 — 별도 데스크톱 앱이나 서버 관리 불필요 | 여러 CLI 설정을 한곳에서 관리하는 별도 데스크톱 앱 | 독립형 Node.js 프록시 서버 + 웹 UI |
-| **전환 범위** | **세션 단위 전환**(`/neoswitch:on`, `/neoswitch:off`); 다른 창은 계속 Claude 사용 | 전역 공급자 전환 또는 공용 로컬 라우터 | 전역 `~/.claude/settings.json` 또는 셸 환경 변수 |
-| **Claude Code 기능** | **그대로 유지** — `ANTHROPIC_AUTH_TOKEN`을 설정하지 않아 claude.ai 커넥터와 auto mode 검사가 계속 동작 | 외부 설정 또는 라우터를 통해 관리 | `ANTHROPIC_AUTH_TOKEN`을 설정해 claude.ai 커넥터가 비활성화됨 |
-| **Google 로그인** | 공식 `agy`로 Google 계정 사용 — **OAuth 토큰을 읽거나 저장·재사용하지 않으며**, `agy` 자체 도구도 차단 | 주로 API 키와 서드파티 중계 사용(`agy` 연동 없음) | 로컬 OAuth 토큰을 저장하거나 읽어 비공개 엔드포인트를 직접 호출 |
-| **추천 대상** | 기존 Claude Code 설정을 유지하면서 원하는 세션만 Gemini 4 Neon으로 전환하려는 경우 | 여러 CLI, API 키, 중계 서버, MCP를 한곳에서 관리하려는 경우 | 다중 계정 로테이션, Windows 지원, Antigravity를 통한 Claude 모델 사용이 필요한 경우 |
+- **세션 단위 전환, 그 자리에서 즉시 복귀.** `/neoswitch:on`과 `/neoswitch:off`는 현재 세션의 다음 메시지부터만 적용됩니다. 같은 프로젝트의 다른 창과 새 세션은 계속 Claude를 쓰고, 마지막 전환 세션을 닫으면 프로젝트 설정 항목도 자동으로 제거됩니다.
+- **Claude Code 기능 그대로 유지.** `ANTHROPIC_AUTH_TOKEN`을 쓰지 않아 `claude.ai` 커넥터가 그대로 유지되고, Antigravity에서는 내장 `WebSearch`가 Google 검색으로 동작합니다. Auto Mode는 재시작과 Claude 사용량 소모 없이 내장 fail-closed 안전 분류기로 바로 동작하며, `/effort`와 선택형 사고 블록(`NEOSWITCH_SHOW_THINKING`)도 Gemini에 깔끔하게 매핑됩니다.
+- **모델 호출 없는 즉시 명령과 실시간 할당량.** Claude Code 2.1.326 이상에서는 `/neoswitch:login`, `/neoswitch:on`, `/neoswitch:off`, `/neoswitch:status`가 모델 턴 없이 바로 응답하고 프롬프트 아래에 실제 응답 모델을 표시합니다. `/neoswitch:status`는 할당량을 쓰지 않고 5시간·주간 Antigravity 사용량 막대와 초기화 시각을 보여 줍니다(`-v`는 전체 할당량 그룹과 잔여 크레딧 포함).
+- **긴 실전 세션을 위한 설계.** ACP 세션 재사용과 청크 분할로 `agy`의 192 KB 잘림을 피하고, 경량 커스텀 에이전트로 `agy` 프롬프트 오버헤드를 약 14k에서 1k 토큰 미만으로 줄입니다. 병렬 도구 호출의 JSON 이스케이프 복구와 프롬프트 제안·세션 제목의 `gemini-3.8-flash` 분리로 Gemini 4 Neon 할당량을 아낍니다.
+- **로컬, 격리, 되돌릴 수 있음.** 트래픽은 서명 후 CA 개인 키를 폐기하는 로컬 TLS에만 머물고, NeoSwitch는 Google OAuth 토큰을 읽거나 저장·재사용하지 않습니다. `agy`는 격리된 작업 폴더에서 실행되며 자체 파일·셸 도구는 경량 에이전트와 검증된 `PreToolUse` 훅으로 이중 차단됩니다. 끌 때는 원래 쓰던 `NODE_EXTRA_CA_CERTS`와 `ANTHROPIC_CUSTOM_HEADERS`도 복원됩니다.
+- **SSH 지원과 무중단 업데이트.** `/neoswitch:login`은 브라우저 로그인과 원격/SSH용 링크+코드 흐름을 함께 제공합니다. 플러그인 업데이트 시 열려 있는 창을 닫지 않고 새 데몬으로 포트를 자동 인계하며, 빌드나 다운로드가 실패해도 캐시된 릴리스로 폴백해 `/neoswitch:off`가 항상 동작합니다.
+- **여러 백엔드 지원.** 공식 `agy`로 Google 계정을 쓰거나 `GEMINI_API_KEY`, Vertex AI, 실험적 OpenAI Responses 백엔드를 선택할 수 있습니다.
 
-## 시작하기
+## 빠른 시작
 
 **1. 플러그인을 설치합니다.** Claude Code에서 아래 두 줄을 한 줄씩 실행하세요. 각 줄은 통째로 복사하세요. 첫 줄은 `neo-switch`, 둘째 줄은 `neoswitch`입니다.
 
@@ -32,7 +32,7 @@ NeoSwitch를 쓰면 Claude Code는 그대로 두고, Claude 대신 Google의 Gem
 /plugin install neoswitch@neoswitch
 ```
 
-이어서 자동 업데이트를 켜 두면 NeoSwitch가 의존하는 부분을 Google이나 Claude Code가 바꿨을 때도 수정이 자동으로 전달됩니다. `/plugin`을 실행하고 **Marketplaces** 탭에서 `neoswitch`를 선택한 뒤 auto-update를 켜세요. Anthropic 외의 마켓플레이스는 Claude Code가 기본적으로 자동 업데이트하지 않습니다.
+Google이나 Claude Code가 NeoSwitch가 의존하는 부분을 바꿨을 때 수정이 자동으로 전달되도록 자동 업데이트를 켜 두세요: `/plugin`을 실행하고 **Marketplaces** 탭에서 `neoswitch`를 선택한 뒤 auto-update를 켭니다. Claude Code는 서드파티 마켓플레이스의 자동 업데이트를 기본으로 꺼 둡니다.
 
 **2. Google 계정으로 로그인합니다.** 전환할 프로젝트에서 Claude Code를 열고 다음을 실행하세요.
 
@@ -40,46 +40,65 @@ NeoSwitch를 쓰면 Claude Code는 그대로 두고, Claude 대신 Google의 Gem
 /neoswitch:login
 ```
 
-Google 약관 경고를 보여 준 뒤 Google의 [Antigravity 명령줄 도구(`agy`)](https://antigravity.google/download)를 통해 브라우저에서 Google 로그인을 열고, 마지막으로 이 프로젝트를 전환합니다. 이 컴퓨터에 아직 `agy`가 없으면 먼저 Google 공식 설치 스크립트로 `~/.local/bin`에 설치합니다(약 230MB. 설치 스크립트는 이 폴더를 셸의 PATH에도 추가합니다). 터미널에 익숙하다면 Gemini API 키도 쓸 수 있습니다. [docs/cli.md](../docs/cli.md#gemini-api-key)(영어)를 보세요.
-
-SSH로 접속한 컴퓨터처럼 열린 브라우저를 쓸 수 없을 때를 위해 명령은 링크도 함께 보여 줍니다. 아무 기기의 브라우저에서 링크를 열어 로그인하세요. Claude Code 2.1.326 이상에서는 링크가 바로 표시되고, 페이지에 나온 코드를 붙여 넣을 대화 상자가 열립니다. 그보다 오래된 Claude Code나 WSL, SSH로 연결한 데스크톱 앱에서는 Claude의 답변이 링크를 보여 주므로, 코드를 붙여 `/neoswitch:login`을 실행하세요. 로그인된 상태에서 `/neoswitch:login`을 다시 실행하면 다른 Google 계정으로 바꿀 수 있습니다. 끝날 때까지 현재 계정이 유지되며, `/neoswitch:login cancel`을 실행하면 그대로 유지됩니다.
+Google 약관 경고를 보여 주고, 공식 [Antigravity CLI(`agy`)](https://antigravity.google/download)가 없으면 `~/.local/bin`에 자동 설치한 뒤(약 230 MB) 브라우저에서 Google 로그인을 열고 이 세션을 켭니다. 원격/SSH 머신을 위한 링크도 함께 출력하므로 아무 기기에서 로그인한 뒤 Claude Code 2.1.326+ 대화 상자에 코드를 붙여 넣으세요(구버전, WSL, SSH 데스크톱 앱에서는 `/neoswitch:login <code>` 실행). 계정 전환은 `/neoswitch:login` 재실행, 현재 계정 유지는 `/neoswitch:login cancel`입니다. API 키나 Vertex AI를 쓰려면 [docs/cli.md](../docs/cli.md#gemini-api-key)(영어)를 보세요.
 
 > [!WARNING]
 > [Google Antigravity 서비스 약관](https://antigravity.google/terms)(제6조)은 다른 도구를 통해 Antigravity를 쓰는 것을 금지하며, NeoSwitch는 그런 도구에 해당합니다. Google은 그렇게 쓰는 사람의 Antigravity 계정을 정지하거나 해지할 수 있습니다. `/neoswitch:login`은 매번 이 경고를 다시 보여 줍니다. 이 위험을 받아들일 수 없다면 로그인하지 마세요.
 
-**3. 다음 메시지를 보내세요.** 명령을 실행한 창은 다음 메시지부터 Gemini 4 Neon을 씁니다. 다른 창과 새 세션은 본인의 Claude 로그인과 connectors로 계속 Claude를 씁니다. Gemini 4 Neon으로 답하게 할 세션마다 `/neoswitch:on`을 실행하세요. 명령의 답이 재시작을 요청하면(Claude Code를 게이트웨이를 통해 시작한 경우), 게이트웨이 없이 같은 프로젝트에서 `claude`를 다시 시작하세요.
+**3. 다음 메시지를 보내세요.** 이 세션은 다음 메시지부터 Gemini 4 Neon을 쓰며, 다른 창과 새 세션은 계속 Claude를 씁니다. 게이트웨이를 통해 시작해 재시작을 요청하면 게이트웨이 없이 같은 프로젝트에서 `claude`를 다시 실행하세요.
 
-## 전환 후 보이는 것
+| 명령 | 역할 |
+|---|---|
+| `/neoswitch:login [code \| cancel]` | 공식 `agy`로 로그인, Google 계정 전환, 또는 SSH 코드 로그인 완료 후 이 세션 켜기 |
+| `/neoswitch:on` | 이 세션을 다음 메시지부터 Gemini 4 Neon으로 전환 |
+| `/neoswitch:off` | 이 세션을 다음 메시지부터 Claude로 복귀 |
+| `/neoswitch:status [-v]` | 활성 모델, Google 로그인 상태, 5시간·주간 할당량 막대 표시(`-v`는 전체 할당량 그룹, 크레딧, 백엔드, 데몬 상세 추가) |
 
-- NeoSwitch 설정을 마치면, NeoSwitch를 쓰지 않는 새 세션의 시작에 프로젝트마다 하루 한 번까지 이런 안내가 나옵니다: `NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time.` `/neoswitch:off`를 실행한 프로젝트에서는 나오지 않으며, 환경 변수에 `NEOSWITCH_NO_HINT=1`을 설정하면 꺼집니다.
-- 헤더에는 `claude-opus-5-5` 같은 Claude 모델 이름이 그대로 보이지만 표시일 뿐이고, 실제로 답하는 것은 Gemini 4 Neon입니다. `/model`로 다른 모델을 골라도 바뀌지 않습니다.
-- 답의 첫 글자가 나오기까지 5~40초가 걸릴 수 있으며 정상입니다. `/neoswitch:login`으로 로그인했다면 `/effort low`로 답이 더 빨리 시작됩니다.
-- 설치나 업데이트 후 첫 NeoSwitch 명령은 준비 때문에 최대 1분쯤 걸릴 수 있습니다.
-- `/neoswitch:status`를 실행하면 이 세션이 Claude와 Gemini 4 Neon 중 무엇을 쓰는지, 다음에 무엇을 하면 되는지 언제든 알려 줍니다.
-- Gemini 4 Neon을 쓰는 세션에서도 auto mode가 별도 설정 없이 바로 동작합니다. NeoSwitch가 내장된 fail-closed 안전 분류기(Antigravity에서는 기본 `gemini-3.8-flash`, 다른 백엔드에서는 설정된 모델)로 각 작업을 검사하므로 Claude Code를 재시작하거나 Claude 사용량을 쓸 필요가 없습니다. 내장 검사를 끄려면 `NEOSWITCH_SAFEGUARD=off`를 설정하고, Claude 로그인으로 Claude가 직접 검사하게 하려면 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude`로 시작하세요(Claude 사용량을 일부 쓰며, Claude가 응답하지 않을 때만 Gemini로 폴백합니다).
-- 새 NeoSwitch가 나오면 세션 시작 메시지로 알려 주고 업데이트 명령을 보여 줍니다. 자동 업데이트가 켜져 있으면 Claude Code가 직접 설치하며, 이미 열려 있는 창도 새 Claude Code 세션이 시작되면 새 버전으로 넘어갑니다. Windows에서는 Claude Code 창을 모두 닫았다가 다시 열면 적용됩니다.
+## 다른 도구와의 비교
+
+| | **NeoSwitch** | **설정 관리자 및 라우터**<br>(예: CC Switch, Claude Code Router) | **독립형 Antigravity 프록시**<br>(예: antigravity-claude-proxy) |
+|---|---|---|---|
+| **설치 형태** | Claude Code 네이티브 플러그인 — 별도 데스크톱 앱이나 서버 관리 불필요 | 여러 CLI 설정을 한곳에서 관리하는 별도 데스크톱 앱 | 독립형 Node.js 프록시 서버 + 웹 UI |
+| **전환 범위** | **세션 단위 전환**(`/neoswitch:on`, `/neoswitch:off`); 다른 창은 계속 Claude 사용 | 전역 공급자 전환 또는 공용 로컬 라우터 | 전역 `~/.claude/settings.json` 또는 셸 환경 변수 |
+| **Claude Code 기능** | **그대로 유지** — `ANTHROPIC_AUTH_TOKEN`을 설정하지 않아 `claude.ai` 커넥터, `WebSearch`, Auto Mode, 실시간 할당량, 네이티브 mod 명령이 계속 동작 | 외부 설정 또는 라우터를 통해 관리 | `ANTHROPIC_AUTH_TOKEN`을 설정해 `claude.ai` 커넥터가 비활성화됨 |
+| **Google 로그인** | 공식 `agy`로 Google 계정 사용 — **OAuth 토큰을 읽거나 저장·재사용하지 않으며**, `agy` 자체 도구도 차단 | 주로 API 키와 서드파티 중계 사용(`agy` 연동 없음) | 로컬 OAuth 토큰을 저장하거나 읽어 비공개 엔드포인트를 직접 호출 |
+| **추천 대상** | 기존 Claude Code 설정을 유지하면서 원하는 세션만 Gemini 4 Neon으로 전환하려는 경우 | 여러 CLI, API 키, 중계 서버, MCP를 한곳에서 관리하려는 경우 | 다중 계정 로테이션, Windows 지원, Antigravity를 통한 Claude 모델 사용이 필요한 경우 |
+
+## 알아두면 좋은 점
+
+- **모델 표시:** Claude Code 상단 헤더에는 `claude-opus-5-5` 같은 Claude 모델 이름이 그대로 보이며 `/model`을 바꿔도 백엔드 모델은 달라지지 않습니다. Claude Code 2.1.326 이상에서는 NeoSwitch가 활성화된 동안 프롬프트 아래에 `Gemini 4 Neon answers this session`이 표시됩니다.
+- **지연 시간, `/effort`, 사고 블록:** 답의 첫 글자가 나오기까지 5~40초 걸릴 수 있습니다. `/effort low`로 응답 시작을 앞당길 수 있으며(Antigravity와 Gemini API / Vertex AI 모두 지원), `NEOSWITCH_SHOW_THINKING=on`을 설정하면 상위 모델의 추론을 Claude Code 사고 블록으로 표시합니다.
+- **설치·업데이트 후 첫 실행:** 설치나 업데이트 후 첫 NeoSwitch 명령은 검증된 릴리스 바이너리를 빌드하거나 내려받는 동안 최대 1분쯤 걸릴 수 있습니다.
+- **Auto Mode:** NeoSwitch의 내장 fail-closed 안전 분류기(Antigravity에서는 `gemini-3.8-flash`, Claude 사용량 0, 재시작 불필요)로 바로 동작합니다. 끄려면 `NEOSWITCH_SAFEGUARD=off`를 설정하고, 본인의 Claude 로그인으로 검사하게 하려면 `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude`로 시작하세요(Claude 사용량을 일부 쓰며 Claude가 응답하지 않을 때 Gemini로 폴백).
+- **하루 한 번 안내:** NeoSwitch 설정을 마치면 사용하지 않는 새 세션에 프로젝트당 하루 최대 한 번 `/neoswitch:on` 한 줄 안내가 나옵니다(`/neoswitch:off`를 실행한 프로젝트에서는 생략, `NEOSWITCH_NO_HINT=1`로 끄기).
+- **자동 업데이트:** 새 릴리스가 나오면 세션 안내와 `/neoswitch:status`가 알려 줍니다. 자동 업데이트가 켜져 있으면 새 세션이 시작될 때 열려 있는 Claude Code 창도 새 데몬으로 자동 전환됩니다.
 
 ## 문제가 생기면
+
+<details>
+<summary>자주 겪는 문제와 해결 방법(클릭해서 펼치기)</summary>
 
 | 보이는 내용 | 해결 방법 |
 |---|---|
 | 세션 시작 안내에 NeoSwitch가 아직 설정되지 않았다고 나옴 | `/neoswitch:login`을 실행하세요. 다음 메시지부터 Gemini 4 Neon을 씁니다. |
 | `agy`가 설치되어 있지 않다는 메시지가 나옴 | `/neoswitch:login`이 자동으로 설치하지 못한 경우입니다. 터미널에서 `curl -fsSL https://antigravity.google/cli/install.sh \| bash`를 실행하거나 [Google 다운로드 페이지](https://antigravity.google/download)에서 설치한 뒤 `/neoswitch:login`을 다시 실행하세요. |
-| 모든 메시지가 연결 오류로 실패하거나, 세션 시작 안내에 이 세션이 답할 수 없다고 나온다 | `/neoswitch:off`를 실행하세요. 이 명령의 답 자체가 실패해도 이 세션은 다음 메시지부터 Claude로 돌아갑니다. 그래도 메시지가 계속 실패하면 `/exit`를 입력하고 `claude`를 다시 시작하세요. 새 세션은 Claude를 쓰며, `/neoswitch:status`가 무엇을 고쳐야 하는지 알려 줍니다. |
-| 다른 Claude Code 창이 이전 설정을 함께 쓰고 있다고 나옴 | 이 세션에서 `/neoswitch:on`을 실행하면 열려 있는 모든 창이 이 세션의 설정으로 넘어갑니다. Windows에서는 Claude Code 창을 모두 닫고 다시 연 뒤 `/neoswitch:on`을 실행하세요. |
-| 다른 인증 소스가 설정되어 claude.ai connectors가 비활성화되었다는 경고가 나온다 | 지금의 NeoSwitch는 이 경고를 일으키지 않습니다. 이전 버전이 원인이었습니다. 플러그인을 업데이트하세요(아래 참고). 그래도 나오면 다른 도구가 Claude Code에 `ANTHROPIC_AUTH_TOKEN`이나 `ANTHROPIC_API_KEY`를 설정한 것입니다. |
-| NeoSwitch에 필요한 포트를 다른 프로그램이 쓰고 있다고 나옴 | 그 프로그램을 닫고 Claude Code를 다시 시작하거나 `/neoswitch:off`를 실행하세요. |
-| NeoSwitch가 프로그램을 내려받지 못했다고 나옴 | 인터넷 연결을 확인하고 Claude Code를 다시 시작하세요. 이 컴퓨터에서 전에 NeoSwitch가 실행된 적이 있으면 다운로드될 때까지 그 이전 버전을 계속 씁니다. |
+| 모든 메시지가 연결 오류로 실패하거나, 세션 시작 안내에 이 세션이 답할 수 없다고 나온다 | `/neoswitch:off`를 실행하세요. Claude Code 2.1.326+에서는 모델 호출 없이 로컬에서 바로 Claude로 되돌립니다. 데몬 자체가 실행 중이 아니거나 실패가 계속되면 `/exit`를 입력하고 `claude`를 다시 시작하세요. 새 세션은 Claude를 쓰며 `/neoswitch:status`가 원인을 알려 줍니다. |
+| 다른 Claude Code 창이 이전 설정을 함께 쓰고 있다고 나옴 | 이 세션에서 `/neoswitch:on`을 실행하면 열려 있는 창이 현재 버전으로 자동 전환됩니다. |
+| 다른 인증 소스가 설정되어 `claude.ai` 커넥터가 비활성화되었다는 경고가 나온다 | 지금의 NeoSwitch는 이 경고를 일으키지 않습니다. 이전 버전이 원인이었습니다. 플러그인을 업데이트하세요(아래 참고). 그래도 나오면 다른 도구가 Claude Code에 `ANTHROPIC_AUTH_TOKEN`이나 `ANTHROPIC_API_KEY`를 설정한 것입니다. |
+| 다른 프로그램이 NeoSwitch가 쓰던 포트를 점유했다고 나옴 | NeoSwitch가 이미 빈 포트로 옮기고 이 프로젝트의 다음 세션을 Claude로 돌려놓았습니다. 새 세션을 시작하고(Claude 사용), Gemini를 쓰려면 `/neoswitch:on`을 실행하세요. |
+| NeoSwitch가 프로그램을 내려받지 못했다고 나옴 | 인터넷 연결을 확인하고 Claude Code를 다시 시작하세요. 이 컴퓨터에서 전에 NeoSwitch가 실행된 적이 있으면 다운로드될 때까지 캐시된 이전 버전을 계속 씁니다. |
 | `/neoswitch:off` 자체가 NeoSwitch를 실행할 수 없다고 나온다 | 프로젝트의 `.claude/settings.local.json`에서 지울 항목을 알려 줍니다. 그 항목을 지우고 새 세션을 시작하세요. [NeoSwitch 제거](#끄기-업데이트-제거)의 1단계에도 같은 항목이 있습니다. |
 | NeoSwitch를 제거한 뒤 어떤 프로젝트에서 Claude Code가 연결되지 않는다 | 그 프로젝트가 아직 NeoSwitch를 가리킵니다. [NeoSwitch 제거](#끄기-업데이트-제거) 1단계대로 `.claude/settings.local.json`에서 그 항목을 지우고 새 세션을 시작하세요. |
 | `/neoswitch:login`이 알 수 없는 명령으로 나옴 | 플러그인을 업데이트하고(아래 참고) Claude Code를 다시 시작한 뒤 `/reload-plugins`를 실행하세요. |
-| Google 계정의 Antigravity 요금제가 gemini-4-neon을 제공하지 않는다는 메시지가 나온다 | 요금제에 Gemini 4 Neon이 없어서 NeoSwitch가 그 모델로 답할 수 없고, 프로젝트는 Claude를 계속 씁니다. `/neoswitch:login`을 다시 실행해 요금제에 포함된 계정으로 로그인하거나, `/neoswitch:off`를 실행하고 새 세션을 시작해 Claude로 돌아가세요. |
+| Google 계정의 Antigravity 요금제가 `gemini-4-neon`을 제공하지 않는다는 메시지가 나온다 | NeoSwitch가 이 세션을 Claude에 그대로 두고 요금제가 제공하는 모델 목록을 표시했습니다. `gemini-4-neon`이 포함된 계정으로 `/neoswitch:login`을 실행하거나, 목록의 모델 중 하나를 `GEMINI_MODEL`로 설정하세요. |
+
+</details>
 
 ## 끄기, 업데이트, 제거
 
 - `/neoswitch:off`는 이 세션을 다음 메시지부터 본인의 Claude 로그인으로 Claude에 돌려놓습니다. `/neoswitch:on`은 다시 설정하지 않고 Gemini 4 Neon으로 다시 전환합니다. 세션을 닫으면 전환도 끝나며, 새 세션은 모두 Claude로 시작합니다.
 
-직접 업데이트하려면 터미널에서 다음을 실행한 뒤 새 Claude Code 세션을 여세요. 이미 열려 있는 창도 새 버전으로 넘어갑니다(Windows에서는 Claude Code 창을 모두 닫았다가 다시 여세요).
+직접 업데이트하려면 터미널에서 다음을 실행한 뒤 새 Claude Code 세션을 여세요(이미 열려 있는 창도 새 버전으로 자동 전환됩니다).
 
 ```bash
 claude plugin marketplace update neoswitch
@@ -103,15 +122,16 @@ claude plugin marketplace remove neoswitch
 | 내용 | 위치 |
 |---|---|
 | 플러그인이 내려받거나 빌드한 NeoSwitch 프로그램 | `$XDG_CACHE_HOME/neoswitch/`, `XDG_CACHE_HOME`이 없으면 `~/.cache/neoswitch/` |
-| 설정과 로그: `proxy.json`(주소, 접근 키, 고른 방법), `daemon.log` | `NEOSWITCH_STATE_DIR`가 설정되어 있으면 그곳, 아니면 macOS는 `~/Library/Application Support/neoswitch/`, Linux는 `$XDG_CONFIG_HOME/neoswitch/` 또는 `~/.config/neoswitch/` |
+| 상태 파일, TLS 번들, 격리된 `agy` 작업 폴더, `daemon.log` | `NEOSWITCH_STATE_DIR`가 설정되어 있으면 그곳, 아니면 macOS는 `~/Library/Application Support/neoswitch/`, Linux는 `$XDG_CONFIG_HOME/neoswitch/` 또는 `~/.config/neoswitch/` |
 
 Google 로그인 정보는 NeoSwitch가 아니라 `agy`가 보관하며 그대로 남습니다. `/neoswitch:login`이 설치한 경우를 포함해 `agy` 자체도 남습니다.
 
 ## NeoSwitch가 바꾸는 것
 
-어떤 프로젝트의 세션이 Gemini 4 Neon을 쓰는 동안 NeoSwitch는 그 프로젝트의 `.claude/settings.local.json` 안 `env` 객체에 세 항목을 추가하고, 그곳에서 쓰는 세션이 없어지면 다시 지웁니다.
+어떤 프로젝트의 세션이 Gemini 4 Neon을 쓰는 동안 NeoSwitch는 그 프로젝트의 `.claude/settings.local.json` 안 `env` 객체에 네 항목을 추가하고, 그곳에서 쓰는 세션이 없어지면 다시 지웁니다.
 
 - `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `NODE_EXTRA_CA_CERTS`: 그 프로젝트의 Claude Code 요청을 NeoSwitch만 응답할 수 있는 암호화된 연결로 이 컴퓨터의 NeoSwitch에 보냅니다. 전환한 세션에는 Gemini 4 Neon이 답하고, 나머지 요청은 본인의 Claude 로그인 그대로 Claude에 넘깁니다. NeoSwitch는 그 로그인을 저장하지도 기록하지도 않습니다. 헤더의 키는 이 컴퓨터의 NeoSwitch에만 쓸 수 있습니다. 파일에 직접 설정한 `NODE_EXTRA_CA_CERTS`나 `ANTHROPIC_CUSTOM_HEADERS`가 있었다면 NeoSwitch는 그 사본을 보관했다가 자기 항목을 지울 때 원래 값으로 되돌립니다.
+- `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`: 요청이 주 대화, 서브에이전트, 압축, 프롬프트 제안 같은 백그라운드 작업 중 어디에서 왔는지 Claude Code가 헤더로 알리게 합니다. NeoSwitch가 주 대화의 Gemini 세션을 유지하는 데 필요합니다. 직접 설정한 항목이라면 그대로 둡니다.
 
 Git 프로젝트에서는 NeoSwitch가 `.claude/settings.local.json`을 해당 클론 전용 제외 목록(`.git/info/exclude`)에도 추가해 토큰이 커밋에 들어가지 않게 합니다. `.gitignore`는 건드리지 않습니다.
 

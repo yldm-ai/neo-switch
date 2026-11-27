@@ -2,25 +2,25 @@
 
 **English** | [简体中文](i18n/README.zh-CN.md) | [繁體中文](i18n/README.zh-TW.md) | [日本語](i18n/README.ja.md) | [한국어](i18n/README.ko.md) | [Español](i18n/README.es.md) | [Français](i18n/README.fr.md) | [Deutsch](i18n/README.de.md) | [Português (Brasil)](i18n/README.pt-BR.md) | [Русский](i18n/README.ru.md)
 
-[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://github.com/yldm-ai/neo-switch/blob/main/.claude-plugin/plugin.json) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/yldm-ai/neo-switch/blob/main/LICENSE)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://github.com/yldm-ai/neo-switch/blob/main/.claude-plugin/plugin.json) [![Release](https://img.shields.io/github/v/release/yldm-ai/neo-switch)](https://github.com/yldm-ai/neo-switch/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/yldm-ai/neo-switch/blob/main/LICENSE)
 
-NeoSwitch makes Claude Code answer with Google's Gemini 4 Neon model instead of Claude, while everything else in Claude Code stays the same.
+NeoSwitch lets you switch individual Claude Code sessions to Google's Gemini 4 Neon while keeping your Claude Code setup, connectors, permissions, and other windows unchanged.
 
 [![Setting up NeoSwitch in three steps](docs/media/neoswitch-demo.gif)](docs/media/neoswitch-demo.mp4)
 
-You switch one project at a time; your other projects keep using Claude. The plugin works on macOS and Linux. Windows is not supported yet.
+Switch one session at a time — other windows in the same project keep using Claude. The plugin works on macOS and Linux; Windows is not supported yet.
 
-## How NeoSwitch compares
+## Highlights
 
-| | **NeoSwitch** | **Config managers & routers**<br>(e.g. CC Switch, Claude Code Router) | **Standalone Antigravity proxies**<br>(e.g. antigravity-claude-proxy) |
-|---|---|---|---|
-| **Setup** | Native Claude Code plugin — no desktop app or server to manage | Separate desktop app managing configs across many CLIs | Standalone Node.js proxy server + Web UI |
-| **Scope** | **One session at a time** (`/neoswitch:on`, `/neoswitch:off`); other windows stay on Claude | Global provider switching or shared local router | Global `~/.claude/settings.json` or shell environment |
-| **Claude Code features** | **Kept intact** — no `ANTHROPIC_AUTH_TOKEN` set, so claude.ai connectors and auto mode checks keep working | Managed through external config or router | Sets `ANTHROPIC_AUTH_TOKEN`, which disables claude.ai connectors |
-| **Google sign-in** | Uses your Google account through official `agy` — **never reads, stores, or replays OAuth tokens**; `agy`'s own tools are blocked | Primarily API keys and third-party relays (no `agy` integration) | Stores or reads local OAuth tokens to call private endpoints directly |
-| **Best for** | Keeping your normal Claude Code setup and switching individual sessions to Gemini 4 Neon | Managing many CLIs, API keys, relays, and MCPs in one place | Multi-account rotation, Windows, or running Claude models via Antigravity |
+- **One session at a time, switch back in place.** `/neoswitch:on` and `/neoswitch:off` affect only the current session from its next message; other windows in the same project and new sessions stay on Claude, and closing the last switched session removes NeoSwitch's project entries automatically.
+- **Claude Code stays Claude Code.** No `ANTHROPIC_AUTH_TOKEN` is written, so `claude.ai` connectors keep working; built-in `WebSearch` runs via Google on Antigravity; Auto Mode works out of the box with a fail-closed safety classifier (no restart, zero Claude usage); `/effort` and optional thinking blocks (`NEOSWITCH_SHOW_THINKING`) map cleanly to Gemini.
+- **Instant native commands and live quota.** On Claude Code 2.1.326 or later, `/neoswitch:login`, `/neoswitch:on`, `/neoswitch:off` and `/neoswitch:status` answer directly with no model turn, a status line under the prompt shows which model answers, and `/neoswitch:status` shows 5-hour and weekly Antigravity quota bars and reset times with zero quota spent (`-v` adds all quota groups and credits).
+- **Built for long real sessions.** ACP session reuse and chunking avoid `agy`'s 192 KB prompt truncation, a slim custom agent cuts `agy`'s prompt overhead from ~14k to under 1k tokens, parallel tool calls include JSON escape repair, and prompt suggestions and session titles route to `gemini-3.8-flash` to save Gemini 4 Neon quota.
+- **Local, isolated, reversible.** Traffic stays on local TLS whose CA private key is discarded after signing; NeoSwitch never reads, stores or replays Google OAuth tokens; `agy` runs in an isolated workspace with its own file and shell tools blocked by both the slim agent and a verified `PreToolUse` hook; your own `NODE_EXTRA_CA_CERTS` and `ANTHROPIC_CUSTOM_HEADERS` are backed up and restored when NeoSwitch turns off.
+- **SSH-ready and seamless updates.** `/neoswitch:login` opens a browser and prints a link + code flow for remote/SSH machines, plugin updates hand the daemon port over automatically without closing open windows, and build or download failures fall back to a cached release so `/neoswitch:off` always has a way out.
+- **Multiple backends.** Use your Google account through official `agy`, or bring a `GEMINI_API_KEY`, Vertex AI, or the experimental OpenAI Responses backend.
 
-## Get started
+## Quick start
 
 **1. Install the plugin.** In Claude Code, run these two lines one at a time. Copy each line whole: the first one says `neo-switch`, the second one `neoswitch`.
 
@@ -32,7 +32,7 @@ You switch one project at a time; your other projects keep using Claude. The plu
 /plugin install neoswitch@neoswitch
 ```
 
-Then turn on automatic updates, so fixes reach you when Google or Claude Code change something NeoSwitch depends on: run `/plugin`, open the **Marketplaces** tab, choose `neoswitch` and turn on auto-update. Claude Code leaves it off for marketplaces that do not come from Anthropic.
+Turn on automatic updates so fixes reach you when Google or Claude Code change something NeoSwitch depends on: run `/plugin`, open the **Marketplaces** tab, choose `neoswitch` and turn on auto-update. Claude Code leaves it off for third-party marketplaces.
 
 **2. Sign in with your Google account.** Open Claude Code in the project you want to switch and run:
 
@@ -40,46 +40,65 @@ Then turn on automatic updates, so fixes reach you when Google or Claude Code ch
 /neoswitch:login
 ```
 
-It shows Google's terms warning, opens Google sign-in in your browser through Google's [Antigravity command-line tool (`agy`)](https://antigravity.google/download), and then switches the project on. If `agy` is not on this computer yet, the command first installs it into `~/.local/bin` with Google's official installer (about 230 MB; the installer also adds that folder to your shell's PATH). If you are comfortable with a terminal, a Gemini API key also works: see [docs/cli.md](docs/cli.md#gemini-api-key).
-
-The command also shows a link, for when the browser it opens is not one you can use, such as on a computer you reach over SSH: open the link in a browser on any device and sign in. With Claude Code 2.1.326 or later, the link appears at once and a dialog asks for the code the page shows: paste it there. On an older Claude Code, and in WSL or the desktop app over SSH, Claude's reply shows the link instead: run `/neoswitch:login` followed by the code. Run `/neoswitch:login` again while signed in to switch to another Google account: it keeps the current one until you finish, and `/neoswitch:login cancel` keeps it for good.
+It shows Google's terms warning, installs Google's official [Antigravity CLI (`agy`)](https://antigravity.google/download) into `~/.local/bin` (~230 MB) if missing, opens Google sign-in in your browser, and switches this session on. It also prints a link for remote/SSH machines: open it on any device, sign in, and paste the code into the Claude Code 2.1.326+ dialog (or run `/neoswitch:login <code>` on older versions, WSL, or the desktop app over SSH). Run `/neoswitch:login` again to switch Google accounts, or `/neoswitch:login cancel` to keep the current one. Prefer an API key or Vertex AI? See [docs/cli.md](docs/cli.md#gemini-api-key).
 
 > [!WARNING]
 > The [Google Antigravity Terms of Service](https://antigravity.google/terms) (section 6) forbid using Antigravity through other tools, and NeoSwitch is such a tool. Google may suspend or close the Antigravity accounts of people who do. `/neoswitch:login` repeats this warning every time. Do not sign in unless you accept that risk.
 
-**3. Send your next message.** The window where you ran the command uses Gemini 4 Neon from its next message. Other windows and new sessions keep using Claude, with your own Claude login and connectors: run `/neoswitch:on` in each session that should answer with Gemini 4 Neon. If the command's reply asks you to restart instead, because Claude Code was started through a gateway, start `claude` again without it in the same project.
+**3. Send your next message.** This session uses Gemini 4 Neon from its next message while other windows and new sessions stay on Claude. If the reply asks you to restart because Claude Code was started through a gateway, start `claude` again without it in the same project.
 
-## What you will see
+| Command | What it does |
+|---|---|
+| `/neoswitch:login [code \| cancel]` | Sign in via official `agy`, switch Google accounts, or finish an SSH code sign-in, then switch this session on |
+| `/neoswitch:on` | Switch this session to Gemini 4 Neon from its next message |
+| `/neoswitch:off` | Switch this session back to Claude from its next message |
+| `/neoswitch:status [-v]` | Show active model, Google sign-in, and 5-hour/weekly quota bars (`-v` adds all quota groups, credits, backend, and daemon details) |
 
-- Once NeoSwitch is set up, a new session that does not use it opens, at most once a day per project, with the note `NeoSwitch is set up: /neoswitch:on answers this session with Gemini 4 Neon, and /neoswitch:off returns it to Claude any time.` It stays away from projects where you ran `/neoswitch:off`; `NEOSWITCH_NO_HINT=1` in your environment turns it off.
-- The header still shows a Claude model name, such as `claude-opus-5-5`. It is only a label: Gemini 4 Neon answers. Choosing another model with `/model` does not change that.
-- A reply can take 5 to 40 seconds before its first words appear. That is normal. If you signed in with `/neoswitch:login`, `/effort low` makes replies start sooner.
-- The first NeoSwitch command after an install or update can take up to a minute while NeoSwitch gets ready.
-- `/neoswitch:status` tells you at any time whether this session uses Claude or Gemini 4 Neon, and what to do next.
-- Auto mode works out of the box in a session that uses Gemini 4 Neon: NeoSwitch runs its own fail-closed safety classifier (using `gemini-3.8-flash` on Antigravity, or your configured backend model) with no restart and no Claude usage. Set `NEOSWITCH_SAFEGUARD=off` to turn NeoSwitch's check off, or start Claude Code with `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` to have Claude check each action with your Claude login instead (uses some Claude usage, falling back to Gemini if Claude does not answer).
-- When a newer NeoSwitch is available, the session note says so and gives the update commands. With auto-update on, Claude Code installs it by itself, and the windows already open move to it as soon as a new Claude Code session starts. On Windows it applies once every Claude Code window has been closed and opened again.
+## How NeoSwitch compares
+
+| | **NeoSwitch** | **Config managers & routers**<br>(e.g. CC Switch, Claude Code Router) | **Standalone Antigravity proxies**<br>(e.g. antigravity-claude-proxy) |
+|---|---|---|---|
+| **Setup** | Native Claude Code plugin — no desktop app or server to manage | Separate desktop app managing configs across many CLIs | Standalone Node.js proxy server + Web UI |
+| **Scope** | **One session at a time** (`/neoswitch:on`, `/neoswitch:off`); other windows stay on Claude | Global provider switching or shared local router | Global `~/.claude/settings.json` or shell environment |
+| **Claude Code features** | **Kept intact** — no `ANTHROPIC_AUTH_TOKEN`, so `claude.ai` connectors, `WebSearch`, Auto Mode, live quota, and native mod commands keep working | Managed through external config or router | Sets `ANTHROPIC_AUTH_TOKEN`, which disables `claude.ai` connectors |
+| **Google sign-in** | Uses your Google account through official `agy` — **never reads, stores, or replays OAuth tokens**; `agy`'s own tools are blocked | Primarily API keys and third-party relays (no `agy` integration) | Stores or reads local OAuth tokens to call private endpoints directly |
+| **Best for** | Keeping your normal Claude Code setup and switching individual sessions to Gemini 4 Neon | Managing many CLIs, API keys, relays, and MCPs in one place | Multi-account rotation, Windows, or running Claude models via Antigravity |
+
+## Good to know
+
+- **Model label:** Claude Code's top header keeps showing the Claude model name (such as `claude-opus-5-5`), and `/model` does not change the backend model. On Claude Code 2.1.326 or later, a status line under the prompt displays `Gemini 4 Neon answers this session` while NeoSwitch is active.
+- **Latency, `/effort` and thinking:** A reply can take 5 to 40 seconds before its first words appear. `/effort low` makes replies start sooner (on both Antigravity and Gemini API / Vertex AI), and `NEOSWITCH_SHOW_THINKING=on` shows upstream reasoning as Claude Code thinking blocks.
+- **First run after install or update:** The first NeoSwitch command after an install or update can take up to a minute while NeoSwitch builds or downloads the verified release binary.
+- **Auto Mode:** Works out of the box with NeoSwitch's fail-closed safety classifier (`gemini-3.8-flash` on Antigravity, zero Claude usage, no restart). Set `NEOSWITCH_SAFEGUARD=off` to turn it off, or start Claude Code with `CLAUDE_CODE_AUTO_MODE_SERVER=0 claude` to check actions with your Claude login instead (uses some Claude usage, falling back to Gemini if Claude does not answer).
+- **Once-a-day note:** Once NeoSwitch is set up, a new session that does not use it opens at most once a day per project with a one-line `/neoswitch:on` note (skipped in projects where you ran `/neoswitch:off`; `NEOSWITCH_NO_HINT=1` turns it off).
+- **Automatic updates:** When a newer release is available, the session note and `/neoswitch:status` say so. With auto-update enabled, open Claude Code windows move to the updated daemon automatically as soon as a new session starts.
 
 ## If something goes wrong
+
+<details>
+<summary>Common issues and fixes (click to expand)</summary>
 
 | What you see | What to do |
 |---|---|
 | The session note says NeoSwitch is not set up yet | Run `/neoswitch:login`. Your next message uses Gemini 4 Neon. |
 | A message says `agy` is not installed | `/neoswitch:login` could not install it by itself. Run `curl -fsSL https://antigravity.google/cli/install.sh \| bash` in a terminal, or install it from [Google's download page](https://antigravity.google/download), then run `/neoswitch:login` again. |
-| Every message fails with a connection error, or the session note says this session cannot answer | Run `/neoswitch:off`: this session continues on Claude from its next message, even if the reply to the command itself fails. If messages keep failing, type `/exit` and start `claude` again: a new session uses Claude, and `/neoswitch:status` tells you what to fix. |
-| The note says other Claude Code windows still share the earlier setup | Run `/neoswitch:on` in this session: every open window moves to its setup. On Windows, close every Claude Code window, open Claude Code again, then run `/neoswitch:on`. |
-| A warning says claude.ai connectors are disabled because another auth source is set | NeoSwitch no longer causes it; an earlier version did. Update the plugin (see below). If it stays, another tool sets `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` for Claude Code. |
-| The note says another program is using the port NeoSwitch needs | Close that program and start Claude Code again, or run `/neoswitch:off`. |
-| The note says NeoSwitch could not download its program | Check your internet connection and start Claude Code again. If NeoSwitch ran on this computer before, it keeps using that earlier version until the download works. |
+| Every message fails with a connection error, or the session note says this session cannot answer | Run `/neoswitch:off`: on Claude Code 2.1.326+ it switches this session back to Claude locally with no model call. If the daemon itself is not running or messages keep failing, type `/exit` and start `claude` again: a new session uses Claude, and `/neoswitch:status` tells you what to fix. |
+| The note says other Claude Code windows still share the earlier setup | Run `/neoswitch:on` in this session: open windows move to the current version automatically. |
+| A warning says `claude.ai` connectors are disabled because another auth source is set | NeoSwitch no longer causes it; an earlier version did. Update the plugin (see below). If it stays, another tool sets `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` for Claude Code. |
+| The note says another program took the port NeoSwitch used | NeoSwitch already moved to a free port and returned the project to Claude for the next session. Start a new session (which uses Claude) and run `/neoswitch:on` to use Gemini. |
+| The note says NeoSwitch could not download its program | Check your internet connection and start Claude Code again. If NeoSwitch ran on this computer before, it keeps using that earlier cached version until the download works. |
 | `/neoswitch:off` itself says NeoSwitch could not run | It lists the entries to delete from the project's `.claude/settings.local.json`; delete them and start a new session. Step 1 of [removing NeoSwitch](#turn-it-off-update-or-remove) lists the same entries. |
 | Claude Code cannot connect in a project after NeoSwitch was removed | The project still points at NeoSwitch. Delete its entries from `.claude/settings.local.json`, as step 1 of [removing NeoSwitch](#turn-it-off-update-or-remove) describes, and start a new session. |
 | `/neoswitch:login` is an unknown command | Update the plugin (see below), restart Claude Code, then run `/reload-plugins`. |
-| A message says your Google account's Antigravity plan does not offer gemini-4-neon | Your plan does not include Gemini 4 Neon, so NeoSwitch cannot answer with it and leaves the project on Claude. Run `/neoswitch:login` again to sign in with an account whose plan has it, or run `/neoswitch:off` and start a new session to go back to Claude. |
+| A message says your Google account's Antigravity plan does not offer `gemini-4-neon` | NeoSwitch left this session on Claude and listed the models your plan does offer. Run `/neoswitch:login` to sign in with an account whose plan includes `gemini-4-neon`, or export `GEMINI_MODEL` set to one of the listed models. |
+
+</details>
 
 ## Turn it off, update or remove
 
 - `/neoswitch:off` switches this session back to Claude from its next message, with your own Claude login. `/neoswitch:on` switches it to Gemini 4 Neon again without setting anything up again. Closing a session ends its switch: every new session starts on Claude.
 
-To update by hand, run these in a terminal, then open a new Claude Code session: the windows already open move to the update too (on Windows, close all Claude Code windows and open them again):
+To update by hand, run these in a terminal, then open a new Claude Code session (open windows move to the update automatically):
 
 ```bash
 claude plugin marketplace update neoswitch
@@ -103,7 +122,7 @@ claude plugin marketplace remove neoswitch
 | What | Where |
 |---|---|
 | The NeoSwitch program the plugin downloads or builds | `$XDG_CACHE_HOME/neoswitch/`, or `~/.cache/neoswitch/` when `XDG_CACHE_HOME` is unset |
-| Settings and log: `proxy.json` (address, access key and chosen route) and `daemon.log` | `NEOSWITCH_STATE_DIR` when set; otherwise `~/Library/Application Support/neoswitch/` on macOS and `$XDG_CONFIG_HOME/neoswitch/` or `~/.config/neoswitch/` on Linux |
+| State, TLS bundle, isolated `agy` workspace, and `daemon.log` | `NEOSWITCH_STATE_DIR` when set; otherwise `~/Library/Application Support/neoswitch/` on macOS and `$XDG_CONFIG_HOME/neoswitch/` or `~/.config/neoswitch/` on Linux |
 
 The Google sign-in is kept by `agy`, not by NeoSwitch, and stays in place; so does `agy` itself, even when `/neoswitch:login` installed it.
 
