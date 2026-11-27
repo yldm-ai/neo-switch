@@ -35,6 +35,8 @@ func (e *RetryableError) Error() string { return e.Message }
 // RateLimitError means the upstream is limiting how fast requests may come, for a short while. The server answers 429, which Claude Code retries with backoff; Message is shown only if every retry fails.
 type RateLimitError struct {
 	Message string
+	// Retried means the upstream already retried the request itself before giving up, so the server adds x-should-retry: false and Claude Code shows Message at once instead of stacking its own retries on top.
+	Retried bool
 }
 
 func (e *RateLimitError) Error() string { return e.Message }

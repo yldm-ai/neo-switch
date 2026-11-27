@@ -197,6 +197,22 @@ func TestStreamErrorBeforeFirstChunkKeepsHTTPStatus(t *testing.T) {
 	}
 }
 
+// A rate limit the upstream already retried is shown at once: Claude Code honors x-should-retry: false on a 429, while a plain rate limit keeps its retries.
+func TestRetriedRateLimitTellsClaudeCodeNotToRetry(t *testing.T) {
+	for _, tc := range []struct {
+		retried bool
+		header  string
+	}{{true, "false"}, {false, ""}} {
+		for _, body := range []string{streamRequest, `{"model":"gemini-neon","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`} {
+			backend := &fakeBackend{err: &translate.RateLimitError{Message: "slow down", Retried: tc.retried}}
+			rec := post(t, NewHandler(Config{Token: "secret", Backend: backend}), "/v1/messages", body)
+			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("x-should-retry") != tc.header {
+				t.Fatalf("retried=%v: %d x-should-retry=%q %s", tc.retried, rec.Code, rec.Header().Get("x-should-retry"), rec.Body)
+			}
+		}
+	}
+}
+
 func TestStreamFailuresAfterStartBecomeErrorEvents(t *testing.T) {
 	first := &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{Content: genai.NewContentFromText("partial", genai.RoleModel)}}}
 	for name, backend := range map[string]*fakeBackend{

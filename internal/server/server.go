@@ -275,6 +275,10 @@ func invalidGeminiKey(e genai.APIError) bool {
 
 func writeUpstreamError(w http.ResponseWriter, err error) {
 	status, typ, message := upstreamStatus(err)
+	if rateLimited := (*translate.RateLimitError)(nil); errors.As(err, &rateLimited) && rateLimited.Retried {
+		// Claude Code honors this on a 429: it shows the message once instead of retrying up to ten times.
+		w.Header().Set("x-should-retry", "false")
+	}
 	writeAPIError(w, status, typ, message)
 }
 

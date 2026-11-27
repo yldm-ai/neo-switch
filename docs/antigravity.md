@@ -116,7 +116,8 @@ When Google refuses a request, Claude Code shows the reason in `agy`'s own words
 | Reason | What Claude Code does |
 | --- | --- |
 | The account's quota for the model is used up | Shows the reason without retrying, with `/neoswitch:off` as the way to continue on Claude |
-| A rate limit, including Google's general `RESOURCE_EXHAUSTED`, which it also sends while `/neoswitch:status` shows the account's 5-hour and weekly usage far from used up | Retries with backoff (429) |
+| A rate limit reported as a JSON-RPC error | Retries with backoff (429) |
+| A rate limit in `agy`'s error line, including Google's general `RESOURCE_EXHAUSTED`, which it also sends while `/neoswitch:status` shows the account's 5-hour and weekly usage far from used up | Shows the reason at once (429 with `x-should-retry: false`): `agy` writes the line only after retrying the turn itself for about two minutes, so Claude Code's own retries would only repeat that wait |
 | A server error (`code 5xx`) in `agy`'s error line | Retries (529) |
 | The conversation is too long for the model | Reports `prompt is too long`, and Claude Code offers `/compact` |
 | Any other refusal in `agy`'s error line | Shows the reason without retrying |
