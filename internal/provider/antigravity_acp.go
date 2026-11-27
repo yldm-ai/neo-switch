@@ -397,7 +397,7 @@ func (a *AntigravityACP) run(ctx context.Context, req translate.Request, onText,
 			return nil, err
 		}
 		if x.session.systemPrompted {
-			x.session.system, x.session.tools = textKey(rawSystem), textKey(rawTools)
+			x.session.system, x.session.systemText, x.session.tools = textKey(rawSystem), rawSystem, textKey(rawTools)
 			pieces = append(overflow, messagePieces(req.Contents, c.imagePrompts)...)
 		} else {
 			pieces = a.freshPieces(x.session, req, c.imagePrompts)
@@ -492,15 +492,26 @@ func (a *AntigravityACP) continuation(x *acpExchange, req translate.Request, key
 	}
 	rawSystem, rawTools := rawContext(req)
 	systemKey, toolsKey := textKey(rawSystem), textKey(rawTools)
-	if systemKey == s.system {
-		rawSystem = ""
+	rawSystemToSend := rawSystem
+	systemAppended := false
+	switch {
+	case systemKey == s.system:
+		rawSystemToSend = ""
+	case s.systemText != "" && strings.HasPrefix(rawSystem, s.systemText):
+		delta := strings.TrimPrefix(rawSystem, s.systemText)
+		if strings.TrimSpace(delta) == "" {
+			rawSystemToSend = ""
+		} else {
+			rawSystemToSend = delta
+			systemAppended = true
+		}
 	}
 	if toolsKey == s.tools {
 		rawTools = ""
 	}
-	s.system, s.tools = systemKey, toolsKey
-	system, tools := neutralizeContext(rawSystem, rawTools)
-	pieces := contextPieces(system, tools, true)
+	s.system, s.systemText, s.tools = systemKey, rawSystem, toolsKey
+	system, tools := neutralizeContext(rawSystemToSend, rawTools)
+	pieces := contextPiecesForContinuation(system, systemAppended, tools)
 	r := &promptRenderer{acceptImages: x.c.imagePrompts}
 	for _, content := range req.Contents[from:] {
 		pieces = append(pieces, r.entry(content))
@@ -511,7 +522,7 @@ func (a *AntigravityACP) continuation(x *acpExchange, req translate.Request, key
 // freshPieces renders the whole request for a new session and records what the session reads.
 func (a *AntigravityACP) freshPieces(s *acpSession, req translate.Request, acceptImages bool) []acpPiece {
 	rawSystem, rawTools := rawContext(req)
-	s.system, s.tools = textKey(rawSystem), textKey(rawTools)
+	s.system, s.systemText, s.tools = textKey(rawSystem), rawSystem, textKey(rawTools)
 	return conversationPieces(req, acceptImages)
 }
 

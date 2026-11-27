@@ -19,6 +19,8 @@ type MessagesRequest struct {
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 	// OutputConfig carries the effort Claude Code sends with every request (its /effort and --effort setting, "medium" by default).
 	OutputConfig *OutputConfig `json:"output_config,omitempty"`
+	// Thinking carries the Anthropic extended-thinking request configuration (e.g. {"type":"enabled","budget_tokens":8000}, {"type":"adaptive"}, or {"type":"disabled"}).
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 	// Safeguards carries Claude Code's server-side Auto Mode review requests (type "dangerous_tool_use").
 	Safeguards []SafeguardRequest `json:"safeguards,omitempty"`
 }
@@ -54,6 +56,12 @@ type ThinkingConfig struct {
 type OutputConfig struct {
 	// Effort is low, medium, high, xhigh or max.
 	Effort string `json:"effort,omitempty"`
+}
+
+type ThinkingConfig struct {
+	Type         string `json:"type,omitempty"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Display      string `json:"display,omitempty"`
 }
 
 type Message struct {

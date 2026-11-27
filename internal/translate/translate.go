@@ -78,6 +78,22 @@ var thinkingLevels = map[string]genai.ThinkingLevel{
 	"max":    genai.ThinkingLevelXhigh,
 }
 
+// thinkingBudgetToLevel maps an Anthropic manual thinking.budget_tokens value onto Gemini's thinking levels for clients that send budget_tokens instead of output_config.effort. Thresholds are midpoints between common 4k/8k/16k/32k reasoning tiers.
+func thinkingBudgetToLevel(budget int) genai.ThinkingLevel {
+	switch {
+	case budget <= 0:
+		return ""
+	case budget >= 24000:
+		return genai.ThinkingLevelXhigh
+	case budget >= 12000:
+		return genai.ThinkingLevelHigh
+	case budget >= 6000:
+		return genai.ThinkingLevelMedium
+	default:
+		return genai.ThinkingLevelLow
+	}
+}
+
 type toolCall struct {
 	name   string
 	callID string
@@ -169,6 +185,9 @@ func ToGemini(in anthropic.MessagesRequest) (Request, error) {
 	if in.OutputConfig != nil {
 		// An unknown effort is a hint NeoSwitch cannot map, not an invalid request: newer Claude Code versions may add levels.
 		out.ThinkingLevel = thinkingLevels[strings.ToLower(strings.TrimSpace(in.OutputConfig.Effort))]
+	}
+	if out.ThinkingLevel == "" && in.Thinking != nil && strings.EqualFold(strings.TrimSpace(in.Thinking.Type), "enabled") {
+		out.ThinkingLevel = thinkingBudgetToLevel(in.Thinking.BudgetTokens)
 	}
 	return out, nil
 }
