@@ -69,8 +69,7 @@ func originRole(o translate.Origin) (acpRole, string) {
 type acpSession struct {
 	id      acp.SessionId
 	options []acp.SessionConfigOption
-	// systemPrompted reports whether this session was created with the answer
-	// instructions, system prompt, and tools pinned via _meta.antigravity.systemPrompt.append.
+	// systemPrompted reports whether this session was created with NeoSwitch's own instructions pinned via _meta.antigravity.systemPrompt.append, so its prompts need not repeat them.
 	systemPrompted bool
 	// system and tools are the hashes of the raw (pre-neutralization) system instructions and tool definitions the session read last.
 	system, tools string

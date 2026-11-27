@@ -336,28 +336,3 @@ func TestEnvelopeDecoderStreamsTextAndParallelToolUses(t *testing.T) {
 		t.Fatalf("exact=%v answer=%#v", d.exact, d.answer)
 	}
 }
-
-func TestBuildSystemPromptAppendOverflow(t *testing.T) {
-	smallAppend, smallOverflow := buildSystemPromptAppend("sys\n", "tools\n")
-	if len(smallOverflow) != 0 {
-		t.Fatalf("unexpected overflow: %#v", smallOverflow)
-	}
-	if !strings.HasPrefix(smallAppend, acpAnswerInstructions+acpSystemUpdateNote) {
-		t.Fatalf("append must start with instructions + update note: %q", smallAppend)
-	}
-	if !strings.Contains(smallAppend, "System instructions:\nsys\n") || !strings.Contains(smallAppend, "Claude Code tool definitions for context only:\ntools\n") {
-		t.Fatalf("append missing system or tools: %q", smallAppend)
-	}
-
-	bigTools := strings.Repeat("t", acpSystemPromptBudget+100)
-	bigAppend, bigOverflow := buildSystemPromptAppend("sys\n", bigTools)
-	if len(bigAppend) > acpSystemPromptBudget {
-		t.Fatalf("append exceeded budget: %d > %d", len(bigAppend), acpSystemPromptBudget)
-	}
-	if !strings.Contains(bigAppend, "System instructions:\nsys\n") {
-		t.Fatal("system instructions should still fit in append")
-	}
-	if len(bigOverflow) != 1 || !strings.Contains(bigOverflow[0].text, bigTools) {
-		t.Fatalf("oversized tools must overflow into prompt pieces: len=%d", len(bigOverflow))
-	}
-}

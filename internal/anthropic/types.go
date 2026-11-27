@@ -101,12 +101,12 @@ type Source struct {
 }
 
 type Response struct {
-	ID           string         `json:"id"`
-	Type         string         `json:"type"`
-	Role         string         `json:"role"`
-	Model        string         `json:"model"`
-	Content      []ContentBlock `json:"content"`
-	StopReason   string         `json:"stop_reason"`
+	ID               string            `json:"id"`
+	Type             string            `json:"type"`
+	Role             string            `json:"role"`
+	Model            string            `json:"model"`
+	Content          []ContentBlock    `json:"content"`
+	StopReason       string            `json:"stop_reason"`
 	StopSequence     *string           `json:"stop_sequence"`
 	Usage            Usage             `json:"usage"`
 	SafeguardResults []SafeguardResult `json:"safeguard_results,omitempty"`
